@@ -1,5 +1,5 @@
 
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.10)
 project(home_voice_assistant LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -12,10 +12,9 @@ add_executable(home_assistant
     src/main.cpp
     src/Env.cpp
     src/OpenAIClient.cpp
-    src/Utils.cpp
 )
 
-target_include_directories(home_assistant PRIVATE include)
+target_include_directories(home_assistant PRIVATE include third_party)
 
 if (WITH_CURL)
   find_package(CURL)
