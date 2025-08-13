@@ -45,6 +45,10 @@ Les arguments suivants ont la priorité sur `config/app.env`:
 - `--input-device <nom|index>`: Sélectionne le périphérique d'entrée audio.
 - `--output-device <nom|index>`: Sélectionne le périphérique de sortie audio.
 - `--record-seconds N`: Durée de l'enregistrement en secondes (défaut: 5).
+- `--asr <vosk|whisper|none>`: Moteur ASR à utiliser (défaut: `none`).
+- `--vosk-model <dir>`: Chemin vers le modèle Vosk.
+- `--with-piper`: Active la synthèse vocale avec Piper.
+- `--piper-model <path.onnx>`: Chemin vers le modèle Piper.
 
 ## Lancement
 
@@ -91,6 +95,25 @@ Pour un test simple d'enregistrement et de lecture :
 ```
 Ce script enregistre 3 secondes d'audio depuis le périphérique par défaut et le rejoue sur le périphérique par défaut.
 
+### Boucle Vocale Complète (ASR/TTS)
+
+Pour une expérience vocale complète, vous pouvez utiliser Vosk pour l'ASR et Piper pour le TTS.
+
+**Installation des dépendances ASR/TTS:**
+- **Vosk**: Suivez les instructions d'installation de la [librairie C++ de Vosk](https://github.com/alphacep/vosk-api). Assurez-vous que `libvosk.so` est trouvable par `pkg-config`.
+- **Piper**: Installez Piper via `pipx`:
+  ```bash
+  python3 -m pip install --user pipx
+  python3 -m pipx ensurepath
+  ~/.local/bin/pipx install piper-tts
+  ```
+
+**Lancement de la boucle vocale:**
+```bash
+./scripts/run_audio_vosk_piper.sh
+```
+Ce script nécessite que les variables d'environnement `VOSK_MODEL_PATH` et `PIPER_MODEL_PATH` soient définies.
+
 ## Build Manuel
 
 Si vous préférez compiler manuellement :
@@ -114,17 +137,22 @@ home-voice-assistant/
   │   ├─ main.cpp
   │   ├─ Env.cpp
   │   ├─ OpenAIClient.cpp
-  │   └─ Audio.cpp
+  │   ├─ Audio.cpp
+  │   ├─ AsrVosk.cpp
+  │   └─ TtsPiper.cpp
   ├─ include/
   │   ├─ Env.h
   │   ├─ OpenAIClient.h
-  │   └─ Audio.h
+  │   ├─ Audio.h
+  │   ├─ AsrVosk.h
+  │   └─ TtsPiper.h
   ├─ third_party/
   │   └─ nlohmann/json.hpp
   ├─ scripts/
   │   ├─ run_text_offline.sh
   │   ├─ run_audio_offline.sh
   │   ├─ run_bt_list_devices.sh
+  │   ├─ run_audio_vosk_piper.sh
   │   ├─ run_online_opengptoss.sh
   │   └─ run_online_ollama.sh
   ├─ config/

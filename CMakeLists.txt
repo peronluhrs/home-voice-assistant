@@ -13,6 +13,8 @@ add_executable(home_assistant
     src/Env.cpp
     src/OpenAIClient.cpp
     src/Audio.cpp
+    src/AsrVosk.cpp
+    src/TtsPiper.cpp
 )
 
 target_include_directories(home_assistant PRIVATE include third_party)
@@ -37,6 +39,28 @@ if (WITH_AUDIO)
     target_link_libraries(home_assistant PRIVATE ${PORTAUDIO_LIBRARIES})
   else()
     message(WARNING "PortAudio not found. Building without audio support.")
+  endif()
+endif()
+
+option(WITH_VOSK "Enable Vosk ASR support" OFF)
+if (WITH_VOSK)
+  pkg_check_modules(VOSK vosk)
+  if (VOSK_FOUND)
+    target_compile_definitions(home_assistant PRIVATE WITH_VOSK=1)
+    target_include_directories(home_assistant PRIVATE ${VOSK_INCLUDE_DIRS})
+    target_link_libraries(home_assistant PRIVATE ${VOSK_LIBRARIES})
+  else()
+    message(WARNING "Vosk not found. Building without Vosk support.")
+  endif()
+endif()
+
+option(WITH_PIPER "Enable Piper TTS support" OFF)
+if (WITH_PIPER)
+  find_program(PIPER_EXECUTABLE piper)
+  if (PIPER_EXECUTABLE)
+    target_compile_definitions(home_assistant PRIVATE WITH_PIPER=1)
+  else()
+    message(WARNING "Piper executable not found. Building without Piper TTS support.")
   endif()
 endif()
 
