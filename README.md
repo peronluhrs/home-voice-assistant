@@ -1,5 +1,4 @@
-
-# Home Voice Assistant (C++ • CMake) — scaffold
+# Home Voice Assistant (C++ • CMake)
 
 Un squelette minimal pour démarrer un **assistant vocal local** que tu pourras
 faire évoluer avec **Jules 2** et **OpenGPT-OSS** (ou tout serveur compatible OpenAI API).
@@ -8,12 +7,81 @@ Quand tu activeras l’audio (ASR/TTS), branche ce que tu veux (Whisper/whisper.
 
 ## Points clés
 
-- **C++17**, **CMake**.
-- **Optionnel**: `libcurl` pour appeler une API de LLM (OpenGPT-OSS via endpoint OpenAI-compatible).
-- **Sans lib JSON** : on construit le JSON à la main et on extrait grossièrement le `content`.
-  Tu pourras remplacer par *nlohmann/json* plus tard.
-- **Config par `.env`** (fichier `config/app.env`). Facile à éditer.
-- **VS Code ready** : tâches et debug fournis.
+- **C++17**, **CMake** (minimum 3.10).
+- **Robuste**: `nlohmann/json` pour le parsing JSON, et `libcurl` pour les appels HTTP.
+- **Configurable**: Par fichier `.env`, avec surcharge via CLI.
+- **Modes online/offline**: Fonctionne avec ou without une connexion à un serveur LLM.
+- **VS Code ready**: Tâches et configurations de debug fournies.
+
+## Pré-requis (Ubuntu)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config
+# Optionnel pour appels API (recommandé) :
+sudo apt install -y libcurl4-openssl-dev
+```
+> **Note**: Le projet nécessite CMake version 3.10 ou supérieure.
+
+## Configuration
+
+La configuration se fait via le fichier `config/app.env`. Les valeurs par défaut sont :
+```
+API_BASE=http://localhost:8000/v1
+API_KEY=EMPTY
+MODEL=gpt-4o-mini
+```
+Ces valeurs peuvent être surchargées par des arguments en ligne de commande.
+
+### Arguments CLI
+
+Les arguments suivants ont la priorité sur `config/app.env`:
+- `--api-base <url>`: URL de base de l'API (ex: `http://localhost:8000/v1`).
+- `--model <name>`: Nom du modèle à utiliser (ex: `llama3.1`).
+- `--api-key <token>`: Clé d'API.
+- `--offline`: Force le mode hors-ligne, même si `libcurl` est installé.
+
+## Lancement
+
+Des scripts sont fournis pour faciliter le lancement dans différents modes.
+
+### Mode Offline
+
+Ce mode ne nécessite aucune connexion réseau et répond en répétant l'entrée (echo).
+```bash
+./scripts/run_offline.sh
+```
+Le script va compiler le projet (si nécessaire) et le lancer avec le flag `--offline`.
+
+### Mode Online (OpenGPT-OSS)
+
+Ce mode se connecte à un serveur compatible OpenAI, comme [OpenGPT-OSS](https://github.com/jules-ai/opengpt-oss).
+```bash
+./scripts/run_online_opengptoss.sh
+```
+Par défaut, il utilise `API_BASE=http://localhost:8000/v1` et `API_KEY=EMPTY`. Vous pouvez surcharger ces variables d'environnement si besoin.
+
+### Mode Online (Ollama)
+
+Ce mode est configuré pour un serveur [Ollama](https://ollama.ai/) avec un modèle comme Llama 3.1.
+```bash
+./scripts/run_online_ollama.sh
+```
+Ce script configure `API_BASE` pour `http://127.0.0.1:11434/v1` et `MODEL` pour `llama3.1`.
+
+## Build Manuel
+
+Si vous préférez compiler manuellement :
+```bash
+mkdir -p build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+# Lancer en mode offline
+./home_assistant --offline
+# ou online
+./home_assistant --api-base http://mon-serveur/v1
+```
 
 ## Arborescence
 
@@ -21,99 +89,14 @@ Quand tu activeras l’audio (ASR/TTS), branche ce que tu veux (Whisper/whisper.
 home-voice-assistant/
   ├─ CMakeLists.txt
   ├─ src/
-  │   ├─ main.cpp
-  │   ├─ Env.cpp
-  │   ├─ OpenAIClient.cpp
-  │   └─ Utils.cpp
   ├─ include/
-  │   ├─ Env.h
-  │   ├─ OpenAIClient.h
-  │   └─ Utils.h
+  ├─ third_party/
+  │   └─ nlohmann/json.hpp
+  ├─ scripts/
+  │   ├─ run_offline.sh
+  │   ├─ run_online_opengptoss.sh
+  │   └─ run_online_ollama.sh
   ├─ config/
   │   └─ app.env
-  ├─ .vscode/
-  │   ├─ settings.json
-  │   ├─ tasks.json
-  │   └─ launch.json
-  ├─ .gitignore
-  ├─ LICENSE
-  └─ README.md
+  ...
 ```
-
-## Pré-requis (Ubuntu)
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake pkg-config
-# Optionnel pour appels API :
-sudo apt install -y libcurl4-openssl-dev
-```
-
-## Configurer l’endpoint (OpenGPT-OSS / OpenAI-compat)
-
-Édite `config/app.env` :
-```
-API_BASE=http://localhost:8000/v1
-API_KEY=EMPTY
-MODEL=gpt-4o-mini
-LANG=fr-FR
-WAKE_WORD=jarvis
-ASR_ENGINE=disabled
-TTS_ENGINE=disabled
-```
-
-> Pour **OpenGPT-OSS**, mets `API_BASE` sur ton instance (souvent `http://localhost:8000/v1`) et `API_KEY` selon la conf.
-> Le client est compatible avec l’API OpenAI "chat completions".
-
-## Build
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
-
-## Lancer (REPL texte)
-
-```bash
-./build/home_assistant
-```
-
-Exemple :
-```
-[assistant] prêt. tape /exit pour quitter.
-you> bonjour
-assistant> (offline) Echo: bonjour
-```
-
-Si `libcurl` est installée, et l’endpoint LLM dispo, les prompts sont envoyés à
-`$API_BASE/chat/completions` avec le modèle `$MODEL`.
-
-## VS Code
-
-- Ouvre le dossier.
-- Tape **Ctrl+Shift+B** pour builder (tâche “CMake: Build”).
-- Lancement debug via **Run and Debug** ⇒ *Home Assistant*.
-
-## Activer l’audio plus tard
-
-Le code est organisé pour accueillir des modules :
-- `audio/` (capture micro, ex: PortAudio)
-- `asr/` (reconnaissance vocale, ex: Whisper.cpp, Vosk)
-- `tts/` (synthèse, ex: Piper, eSpeak-NG)
-
-Tu pourras ajouter des options CMake (e.g. `-DWITH_AUDIO=ON`) et les backends désirés.
-
-## Git
-
-Le zip contient déjà l’arborescence. Si tu veux un repo local :
-```bash
-git init
-git add .
-git commit -m "bootstrap: home voice assistant scaffold"
-```
-
-## Avertissement
-
-- L’extraction JSON est volontairement minimaliste (regex naïve). Remplace par une
-  lib JSON propre (ex: **nlohmann/json**) quand tu branches vraiment l’API.
-- Le mode “offline” te permet d’itérer sans dépendances externes.
