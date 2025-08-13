@@ -28,3 +28,6 @@ Thumbs.db
 
 # Local config (can include secrets)
 config/app.env.local
+
+# editor backups
+*.bak
