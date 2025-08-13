@@ -40,16 +40,21 @@ Les arguments suivants ont la priorité sur `config/app.env`:
 - `--model <name>`: Nom du modèle à utiliser (ex: `llama3.1`).
 - `--api-key <token>`: Clé d'API.
 - `--offline`: Force le mode hors-ligne, même si `libcurl` est installé.
+- `--with-audio`: Active le mode audio (enregistrement et lecture).
+- `--list-devices`: Liste les périphériques audio disponibles et quitte.
+- `--input-device <nom|index>`: Sélectionne le périphérique d'entrée audio.
+- `--output-device <nom|index>`: Sélectionne le périphérique de sortie audio.
+- `--record-seconds N`: Durée de l'enregistrement en secondes (défaut: 5).
 
 ## Lancement
 
 Des scripts sont fournis pour faciliter le lancement dans différents modes.
 
-### Mode Offline
+### Mode Texte (Offline)
 
 Ce mode ne nécessite aucune connexion réseau et répond en répétant l'entrée (echo).
 ```bash
-./scripts/run_offline.sh
+./scripts/run_text_offline.sh
 ```
 Le script va compiler le projet (si nécessaire) et le lancer avec le flag `--offline`.
 
@@ -68,6 +73,23 @@ Ce mode est configuré pour un serveur [Ollama](https://ollama.ai/) avec un mod�
 ./scripts/run_online_ollama.sh
 ```
 Ce script configure `API_BASE` pour `http://127.0.0.1:11434/v1` et `MODEL` pour `llama3.1`.
+
+### Mode Audio
+
+Pour utiliser les fonctionnalités audio, le projet doit être compilé avec l'option `WITH_AUDIO=ON`.
+
+#### Lister les périphériques audio
+Pour voir les périphériques audio disponibles :
+```bash
+./scripts/run_bt_list_devices.sh
+```
+
+#### Enregistrement et lecture
+Pour un test simple d'enregistrement et de lecture :
+```bash
+./scripts/run_audio_offline.sh
+```
+Ce script enregistre 3 secondes d'audio depuis le périphérique par défaut et le rejoue sur le périphérique par défaut.
 
 ## Build Manuel
 
@@ -89,11 +111,20 @@ cmake --build .
 home-voice-assistant/
   ├─ CMakeLists.txt
   ├─ src/
+  │   ├─ main.cpp
+  │   ├─ Env.cpp
+  │   ├─ OpenAIClient.cpp
+  │   └─ Audio.cpp
   ├─ include/
+  │   ├─ Env.h
+  │   ├─ OpenAIClient.h
+  │   └─ Audio.h
   ├─ third_party/
   │   └─ nlohmann/json.hpp
   ├─ scripts/
-  │   ├─ run_offline.sh
+  │   ├─ run_text_offline.sh
+  │   ├─ run_audio_offline.sh
+  │   ├─ run_bt_list_devices.sh
   │   ├─ run_online_opengptoss.sh
   │   └─ run_online_ollama.sh
   ├─ config/
