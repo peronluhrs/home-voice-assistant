@@ -1,0 +1,30 @@
+
+# Build artifacts
+/build/
+/out/
+/dist/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.log
+
+# VSCode
+.vscode/
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config (can include secrets)
+config/app.env.local
