@@ -38,3 +38,6 @@ cmake_install.cmake
 
 # Captured audio
 captures/
+
+# Memory store
+data/
