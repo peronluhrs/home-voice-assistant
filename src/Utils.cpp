@@ -1,6 +1,8 @@
 #include "Utils.h"
 #include <cctype>
 #include <algorithm>
+#include <fstream>
+#include <iostream>
 
 static inline bool is_space(char c) {
     return std::isspace(static_cast<unsigned char>(c));
@@ -61,4 +63,54 @@ std::string join(const std::vector<std::string>& items, const std::string& sep) 
         out += items[i];
     }
     return out;
+}
+
+// Helper to write little-endian values
+template<typename T>
+static void write_le(std::ofstream& stream, T value) {
+    stream.write(reinterpret_cast<char*>(&value), sizeof(T));
+}
+
+bool saveWav(const std::string& filePath, const std::vector<int16_t>& pcm_data, int32_t sample_rate) {
+    std::ofstream file(filePath, std::ios::binary);
+    if (!file) {
+        std::cerr << "Error: Could not open file for writing: " << filePath << std::endl;
+        return false;
+    }
+
+    // --- WAV Header ---
+    const int16_t num_channels = 1;
+    const int16_t bits_per_sample = 16;
+    const int32_t subchunk2_size = pcm_data.size() * num_channels * bits_per_sample / 8;
+    const int32_t chunk_size = 36 + subchunk2_size;
+
+    // "RIFF" chunk descriptor
+    file.write("RIFF", 4);
+    write_le(file, chunk_size);
+    file.write("WAVE", 4);
+
+    // "fmt " sub-chunk
+    file.write("fmt ", 4);
+    write_le(file, (int32_t)16); // Subchunk1Size for PCM
+    write_le(file, (int16_t)1);  // AudioFormat (1 for PCM)
+    write_le(file, num_channels);
+    write_le(file, sample_rate);
+    write_le(file, (int32_t)(sample_rate * num_channels * bits_per_sample / 8)); // ByteRate
+    write_le(file, (int16_t)(num_channels * bits_per_sample / 8)); // BlockAlign
+    write_le(file, bits_per_sample);
+
+    // "data" sub-chunk
+    file.write("data", 4);
+    write_le(file, subchunk2_size);
+
+    // --- PCM Data ---
+    file.write(reinterpret_cast<const char*>(pcm_data.data()), pcm_data.size() * sizeof(int16_t));
+
+    if (!file) {
+        std::cerr << "Error: Failed to write all data to WAV file: " << filePath << std::endl;
+        return false;
+    }
+
+    std::cout << "[wav] Saved " << pcm_data.size() << " samples to " << filePath << std::endl;
+    return true;
 }

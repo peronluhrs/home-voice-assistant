@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <thread>
+#include <chrono>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifdef WITH_AUDIO
 // --- Private Helper Functions ---
 
 // Simple linear interpolation for resampling
@@ -117,6 +120,7 @@ double Audio::pickSupportedRate(PaDeviceIndex dev, bool isOutput, double preferr
     std::cerr << "[audio] No supported sample rate found for device " << dev << ".\n";
     return -1.0;
 }
+#endif // WITH_AUDIO
 
 
 // --- Public Methods ---
@@ -148,9 +152,9 @@ void Audio::terminate() {
 #endif
 }
 
+#ifdef WITH_AUDIO
 std::vector<AudioDeviceInfo> Audio::listDevices() {
     std::vector<AudioDeviceInfo> devices;
-#ifdef WITH_AUDIO
     int numDevices = Pa_GetDeviceCount();
     if (numDevices < 0) {
         std::cerr << "PortAudio error (Pa_GetDeviceCount): " << Pa_GetErrorText(numDevices) << std::endl;
@@ -198,12 +202,10 @@ std::vector<AudioDeviceInfo> Audio::listDevices() {
             devices.push_back(info);
         }
     }
-#endif
     return devices;
 }
 
 int Audio::findDevice(const std::string& key, bool isOutput) {
-#ifdef WITH_AUDIO
     // Try parsing as a number first
     try {
         size_t pos;
@@ -247,12 +249,10 @@ int Audio::findDevice(const std::string& key, bool isOutput) {
     if (defaultDevice != paNoDevice) {
         return defaultDevice;
     }
-#endif
     return -1; // No suitable device found
 }
 
 bool Audio::record(int deviceId, int seconds, double& sampleRate, std::vector<int16_t>& buffer) {
-#ifdef WITH_AUDIO
     PaDeviceIndex dev = (deviceId >= 0) ? deviceId : Pa_GetDefaultInputDevice();
     if (dev == paNoDevice) {
         std::cerr << "[audio] No input device found.\n";
@@ -298,14 +298,92 @@ bool Audio::record(int deviceId, int seconds, double& sampleRate, std::vector<in
     Pa_CloseStream(stream);
     std::cout << "[audio] Recording finished.\n";
     return err == paNoError || err == paInputOverflowed;
-#else
-    (void)deviceId; (void)seconds; (void)sampleRate; (void)buffer;
-    return false;
-#endif
 }
 
+bool Audio::recordPtt(int deviceId, int maxSeconds, double& sampleRate, std::vector<int16_t>& buffer) {
+    PaDeviceIndex dev = (deviceId >= 0) ? deviceId : Pa_GetDefaultInputDevice();
+    if (dev == paNoDevice) {
+        std::cerr << "[audio] No input device found.\n";
+        return false;
+    }
+
+    sampleRate = pickSupportedRate(dev, false, sampleRate);
+    if (sampleRate <= 0) {
+        std::cerr << "[audio] Could not find a supported sample rate for recording.\n";
+        return false;
+    }
+
+    buffer.clear();
+    // Reserve for ~10s of audio data as requested
+    buffer.reserve(static_cast<size_t>(10 * sampleRate));
+
+    PaStream* stream = nullptr;
+    PaStreamParameters inParams{};
+    const PaDeviceInfo* di = Pa_GetDeviceInfo(dev);
+    inParams.device = dev;
+    inParams.channelCount = 1;
+    inParams.sampleFormat = paInt16;
+    inParams.suggestedLatency = di ? di->defaultLowInputLatency : 0.050;
+
+    PaError err = Pa_OpenStream(&stream, &inParams, nullptr, sampleRate, paFramesPerBufferUnspecified, paNoFlag, nullptr, nullptr);
+    if (err != paNoError || !stream) {
+        std::cerr << "[audio] PortAudio error (Pa_OpenStream, recordPtt): " << Pa_GetErrorText(err) << "\n";
+        return false;
+    }
+
+    if ((err = Pa_StartStream(stream)) != paNoError) {
+        std::cerr << "[audio] PortAudio error (Pa_StartStream, recordPtt): " << Pa_GetErrorText(err) << "\n";
+        Pa_CloseStream(stream);
+        return false;
+    }
+
+    auto startTime = std::chrono::steady_clock::now();
+
+    // Clear any pending newline from previous input
+    while (std::cin.rdbuf()->in_avail() > 0) {
+        std::cin.get();
+    }
+
+    while (true) {
+        // Check for stop condition: time limit
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
+        if (elapsed >= maxSeconds) {
+            std::cout << "[audio] Reached max recording time of " << maxSeconds << "s.\n";
+            break;
+        }
+
+        // Check for stop condition: user input
+        // This is a non-portable, simple way to check for console input.
+        if (std::cin.rdbuf()->in_avail() > 0) {
+            std::cout << "[audio] Stop signal received.\n";
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            break;
+        }
+
+        // Read available audio data
+        long framesAvailable = Pa_GetStreamReadAvailable(stream);
+        if (framesAvailable > 0) {
+            size_t oldSize = buffer.size();
+            buffer.resize(oldSize + framesAvailable);
+            err = Pa_ReadStream(stream, buffer.data() + oldSize, (unsigned long)framesAvailable);
+            if (err != paNoError && err != paInputOverflowed) {
+                std::cerr << "[audio] PortAudio error (Pa_ReadStream): " << Pa_GetErrorText(err) << "\n";
+            }
+        }
+
+        // Don't busy-wait
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    Pa_StopStream(stream);
+    Pa_CloseStream(stream);
+    std::cout << "[audio] Recording finished. Total duration: " << (double)buffer.size() / sampleRate << "s\n";
+    return true;
+}
+
+
 bool Audio::playback(int deviceId, double sampleRate, const std::vector<int16_t>& buffer) {
-#ifdef WITH_AUDIO
     if (buffer.empty()) {
         std::cerr << "[audio] Playback buffer is empty.\n";
         return false;
@@ -380,11 +458,9 @@ bool Audio::playback(int deviceId, double sampleRate, const std::vector<int16_t>
     Pa_CloseStream(stream);
     std::cout << "[audio] Playback finished.\n";
     return err == paNoError || err == paOutputUnderflowed;
-#else
-    (void)deviceId; (void)sampleRate; (void)buffer;
-    return false;
-#endif
 }
+
+#endif // WITH_AUDIO
 
 std::vector<int16_t> Audio::generateSineWave(double frequency, int duration_ms, double sampleRate) {
     int numSamples = static_cast<int>((duration_ms / 1000.0) * sampleRate);

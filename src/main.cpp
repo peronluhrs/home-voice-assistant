@@ -6,9 +6,14 @@
 #include <cctype>
 #include <limits>
 #include <iomanip>
+#include <filesystem>
+#include <chrono>
+#include <ctime>
+#include <sstream>
 
 #include "OpenAIClient.h"
 #include "Audio.h"
+#include "Utils.h"
 
 // --- config minimale (fallback si pas d'Env.h)
 struct AppCfg {
@@ -95,6 +100,10 @@ struct Args {
     std::string piperBin;
     std::string piperModel;
     std::string say;
+    // PTT mode
+    bool ptt = false;
+    std::string saveWavPath;
+    double sampleRateIn = 16000.0;
 };
 
 static void printHelp() {
@@ -107,7 +116,10 @@ static void printHelp() {
               << "  --list-devices        List available audio devices and exit.\n"
               << "  --input-device <key>  Keyword or index for input device.\n"
               << "  --output-device <key> Keyword or index for output device.\n"
-              << "  --record-seconds <N>  Duration of audio recording in seconds (default: 5).\n\n"
+              << "  --record-seconds <N>  Hard cap for recording duration (default: 5s).\n"
+              << "  --ptt                 Enable Push-to-Talk mode (press Enter to start/stop).\n"
+              << "  --save-wav <path>     If set, save capture to WAV. If path is a dir, use a timestamped filename.\n"
+              << "  --sample-rate-in <Hz> Requested input sample rate (default: 16000). Falls back if unsupported.\n\n"
               << "ASR/TTS Options:\n"
               << "  --with-vosk           Enable Vosk ASR (requires build with -DWITH_VOSK=ON).\n"
               << "  --vosk-model <path>   Path to the Vosk model directory.\n"
@@ -131,6 +143,10 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--input-device") next(a.inKey);
         else if (s == "--output-device") next(a.outKey);
         else if (s == "--vosk-model") next(a.voskModel);
+        // PTT
+        else if (s == "--ptt") { a.ptt = true; a.withAudio = true; }
+        else if (s == "--save-wav") next(a.saveWavPath);
+        else if (s == "--sample-rate-in") { std::string v; next(v); a.sampleRateIn = std::atof(v.c_str()); }
         // Piper args
         else if (s == "--with-piper") a.withPiper = true;
         else if (s == "--piper-bin") next(a.piperBin);
@@ -159,6 +175,92 @@ int main(int argc, char** argv) {
     if (args.listDevices) {
         printDeviceList();
         return 0;
+    }
+
+    // --- PTT mode ---
+    if (args.ptt) {
+        int inIdx = Audio::findDevice(args.inKey, false);
+        if (!args.inKey.empty() && inIdx == -1) {
+            std::cerr << "Error: Could not find requested input device: " << args.inKey << std::endl;
+            return 1;
+        }
+        std::cout << "[audio] Using input device index: " << inIdx << std::endl;
+
+        std::cout << "[audio] Press Enter to start recording (" << args.recordSeconds << "s max)...";
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+        std::vector<int16_t> pcm;
+        double sampleRate = args.sampleRateIn;
+
+        std::cout << "[audio] Recording..." << std::endl;
+        audio.recordPtt(inIdx, args.recordSeconds, sampleRate, pcm);
+
+        if (!args.saveWavPath.empty()) {
+            std::string finalPath = args.saveWavPath;
+            try {
+                if (std::filesystem::is_directory(finalPath)) {
+                    // Create captures/ if it doesn't exist
+                    std::filesystem::path dir = finalPath;
+                    if (dir.filename() == "." || dir.filename() == "..") { // e.g. "captures/"
+                       dir = std::filesystem::path(finalPath);
+                    } else if (finalPath.back() == '/' || finalPath.back() == '\\') {
+                       dir = std::filesystem::path(finalPath);
+                    } else {
+                       // This case is ambiguous, but let's assume it's a directory
+                       dir = std::filesystem::path(finalPath);
+                    }
+
+                    if (!std::filesystem::exists(dir)) {
+                        std::filesystem::create_directories(dir);
+                    }
+
+                    auto now = std::chrono::system_clock::now();
+                    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+                    std::tm tm_buf;
+#ifdef _WIN32
+                    localtime_s(&tm_buf, &in_time_t);
+#else
+                    localtime_r(&in_time_t, &tm_buf);
+#endif
+                    std::stringstream ss;
+                    ss << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
+                    finalPath = (dir / (ss.str() + ".wav")).string();
+                }
+                // If it's a file path, we'll just use it.
+                // Ensure parent directory exists for file paths too.
+                else {
+                    std::filesystem::path p(finalPath);
+                    if (p.has_parent_path() && !std::filesystem::exists(p.parent_path())) {
+                        std::filesystem::create_directories(p.parent_path());
+                    }
+                }
+            } catch (const std::filesystem::filesystem_error& e) {
+                // If path is not a valid directory or file name (e.g. "captures"), it throws.
+                // In this case, we treat it as a directory to be created.
+                std::filesystem::path dir(finalPath);
+                std::filesystem::create_directories(dir);
+
+                auto now = std::chrono::system_clock::now();
+                auto in_time_t = std::chrono::system_clock::to_time_t(now);
+                std::tm tm_buf;
+#ifdef _WIN32
+                localtime_s(&tm_buf, &in_time_t);
+#else
+                localtime_r(&in_time_t, &tm_buf);
+#endif
+                std::stringstream ss;
+                ss << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
+                finalPath = (dir / (ss.str() + ".wav")).string();
+            }
+
+            if (!pcm.empty()) {
+                // The function needs to be called from the global namespace
+                ::saveWav(finalPath, pcm, static_cast<int32_t>(sampleRate));
+            } else {
+                std::cout << "[audio] No audio recorded, WAV file not saved." << std::endl;
+            }
+        }
+        return 0; // PTT mode exits after recording
     }
 
 #if defined(WITH_PIPER) && defined(WITH_AUDIO)
