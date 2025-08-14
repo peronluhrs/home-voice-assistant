@@ -65,6 +65,65 @@ std::string join(const std::vector<std::string>& items, const std::string& sep) 
     return out;
 }
 
+#define DR_WAV_IMPLEMENTATION
+#include "dr_wav.h"
+
+#include <cmath>
+
+#ifdef WITH_VOSK
+bool loadWav(const std::string& filePath, std::vector<int16_t>& pcm_data, uint32_t& sample_rate) {
+    unsigned int channels;
+    unsigned int sr;
+    drwav_uint64 totalFrameCount;
+    int16_t* pcm_frames = drwav_open_file_and_read_pcm_frames_s16(filePath.c_str(), &channels, &sr, &totalFrameCount, nullptr);
+
+    if (pcm_frames == nullptr) {
+        std::cerr << "Error: Could not load WAV file: " << filePath << std::endl;
+        return false;
+    }
+
+    if (channels != 1) {
+        std::cerr << "Error: Only mono WAV files are supported. File has " << channels << " channels." << std::endl;
+        drwav_free(pcm_frames, nullptr);
+        return false;
+    }
+
+    sample_rate = sr;
+    pcm_data.assign(pcm_frames, pcm_frames + totalFrameCount);
+    drwav_free(pcm_frames, nullptr);
+
+    return true;
+}
+#endif
+
+std::vector<int16_t> resample(const std::vector<int16_t>& pcm_in, double sample_rate_in, double sample_rate_out) {
+    if (sample_rate_in == sample_rate_out) {
+        return pcm_in;
+    }
+
+    double ratio = sample_rate_in / sample_rate_out;
+    size_t out_len = static_cast<size_t>(pcm_in.size() / ratio);
+    std::vector<int16_t> pcm_out(out_len);
+
+    for (size_t i = 0; i < out_len; ++i) {
+        double in_idx_f = i * ratio;
+        size_t in_idx_i = static_cast<size_t>(in_idx_f);
+        double frac = in_idx_f - in_idx_i;
+
+        if (in_idx_i + 1 < pcm_in.size()) {
+            // Linear interpolation
+            pcm_out[i] = static_cast<int16_t>(
+                pcm_in[in_idx_i] * (1.0 - frac) + pcm_in[in_idx_i + 1] * frac
+            );
+        } else {
+            // Last sample
+            pcm_out[i] = pcm_in.back();
+        }
+    }
+
+    return pcm_out;
+}
+
 // Helper to write little-endian values
 template<typename T>
 static void write_le(std::ofstream& stream, T value) {

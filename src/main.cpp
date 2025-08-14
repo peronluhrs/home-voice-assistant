@@ -15,6 +15,10 @@
 #include "Audio.h"
 #include "Utils.h"
 
+#ifdef WITH_VOSK
+#include "AsrVosk.h"
+#endif
+
 // --- config minimale (fallback si pas d'Env.h)
 struct AppCfg {
     std::string apiBase = "http://localhost:8000/v1";
@@ -94,8 +98,14 @@ struct Args {
     bool listDevices = false;
     int recordSeconds = 5;
     std::string inKey, outKey;
+#ifdef WITH_VOSK
+    // ASR options
+    bool withVosk = false;
     std::string voskModel;
-    // Piper options
+    std::string sttFromWav;
+    std::string sttDumpJson;
+#endif
+    // Piper TTS options
     bool withPiper = false;
     std::string piperBin;
     std::string piperModel;
@@ -121,8 +131,12 @@ static void printHelp() {
               << "  --save-wav <path>     If set, save capture to WAV. If path is a dir, use a timestamped filename.\n"
               << "  --sample-rate-in <Hz> Requested input sample rate (default: 16000). Falls back if unsupported.\n\n"
               << "ASR/TTS Options:\n"
-              << "  --with-vosk           Enable Vosk ASR (requires build with -DWITH_VOSK=ON).\n"
-              << "  --vosk-model <path>   Path to the Vosk model directory.\n"
+#ifdef WITH_VOSK
+              << "  --with-vosk           Enable Vosk ASR feature path (e.g. for PTT transcription).\n"
+              << "  --vosk-model <dir>    Path to the Vosk model directory.\n"
+              << "  --stt-from-wav <path> Transcribe a WAV file and print the text (no audio stack needed).\n"
+              << "  --stt-dump-json <path> Optional: write full ASR result to a JSON file.\n"
+#endif
               << "  --with-piper          Enable Piper TTS (requires build with -DWITH_PIPER=ON).\n"
               << "  --piper-bin <path>    Optional path to the 'piper' executable.\n"
               << "  --piper-model <path>  Path to the Piper TTS model file (.onnx), required if --with-piper.\n"
@@ -142,7 +156,13 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--record-seconds") { std::string v; next(v); a.recordSeconds = std::max(1, std::atoi(v.c_str())); }
         else if (s == "--input-device") next(a.inKey);
         else if (s == "--output-device") next(a.outKey);
+#ifdef WITH_VOSK
+        // ASR
+        else if (s == "--with-vosk") a.withVosk = true;
         else if (s == "--vosk-model") next(a.voskModel);
+        else if (s == "--stt-from-wav") next(a.sttFromWav);
+        else if (s == "--stt-dump-json") next(a.sttDumpJson);
+#endif
         // PTT
         else if (s == "--ptt") { a.ptt = true; a.withAudio = true; }
         else if (s == "--save-wav") next(a.saveWavPath);
@@ -168,6 +188,46 @@ int main(int argc, char** argv) {
         printHelp();
         return 0;
     }
+
+#ifdef WITH_VOSK
+    // --- Offline STT from WAV file ---
+    if (!args.sttFromWav.empty()) {
+        if (args.voskModel.empty()) {
+            std::cerr << "Error: --vosk-model <dir> is required for --stt-from-wav." << std::endl;
+            return 1;
+        }
+
+        std::vector<int16_t> pcm;
+        uint32_t sample_rate;
+        if (!loadWav(args.sttFromWav, pcm, sample_rate)) {
+            // loadWav already prints an error
+            return 1;
+        }
+        std::cout << "[asr] Loaded " << pcm.size() << " samples from " << args.sttFromWav << " (rate: " << sample_rate << ")" << std::endl;
+
+        AsrVosk asr(args.voskModel);
+        if (!asr.isAvailable()) {
+            std::cerr << "Error: " << asr.lastError() << std::endl;
+            return 1;
+        }
+
+        std::string transcript = asr.transcribe(pcm, sample_rate);
+        std::cout << "Transcript: " << transcript << std::endl;
+
+        if (!args.sttDumpJson.empty()) {
+            std::string full_json = asr.transcribe_and_get_full_json(pcm, sample_rate);
+            std::ofstream out(args.sttDumpJson);
+            if (out) {
+                out << full_json;
+                std::cout << "[asr] Dumped full JSON result to " << args.sttDumpJson << std::endl;
+            } else {
+                std::cerr << "Error: Could not write to JSON file: " << args.sttDumpJson << std::endl;
+            }
+        }
+        return 0;
+    }
+#endif
+
 
 #ifdef WITH_AUDIO
     // Must be constructed for Pa_Initialize/Terminate RAII
@@ -260,6 +320,26 @@ int main(int argc, char** argv) {
                 std::cout << "[audio] No audio recorded, WAV file not saved." << std::endl;
             }
         }
+
+#ifdef WITH_VOSK
+        // --- PTT with ASR ---
+        if (args.withVosk) {
+            if (args.voskModel.empty()) {
+                std::cerr << "Error: --vosk-model <dir> is required when using --with-vosk in PTT mode." << std::endl;
+            } else if (pcm.empty()) {
+                std::cout << "[asr] No audio recorded, skipping transcription." << std::endl;
+            } else {
+                AsrVosk asr(args.voskModel);
+                if (asr.isAvailable()) {
+                    std::cout << "[asr] Transcribing recorded audio..." << std::endl;
+                    std::string transcript = asr.transcribe(pcm, sampleRate);
+                    std::cout << "Transcript: " << transcript << std::endl;
+                } else {
+                    std::cerr << "Error: " << asr.lastError() << std::endl;
+                }
+            }
+        }
+#endif
         return 0; // PTT mode exits after recording
     }
 

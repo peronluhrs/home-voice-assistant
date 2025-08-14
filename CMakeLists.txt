@@ -77,7 +77,7 @@ if (WITH_VOSK)
     target_include_directories(home_assistant PRIVATE ${VOSK_INCLUDE_DIR})
     target_link_libraries(home_assistant PRIVATE ${VOSK_LIBRARY})
   else()
-    message(WARNING "Vosk not found. ASR Vosk will be disabled at runtime.")
+    message(FATAL_ERROR "Vosk not found. Set -DVOSK_INCLUDE_DIR and -DVOSK_LIBRARY, or disable with -DWITH_VOSK=OFF.")
   endif()
 endif()
 
