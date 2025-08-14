@@ -1,3 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Write src/main.cpp (tuned to call ::generateSineWave from Utils) and push feat/04b-vad
+
+BRANCH="feat/04b-vad"
+
+# Ensure paths
+mkdir -p src
+
+# Write main.cpp
+cat > src/main.cpp <<'EOF'
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -531,3 +542,31 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
+EOF
+
+echo "[ok] Wrote src/main.cpp"
+
+# Commit & push
+git switch -c "$BRANCH" 2>/dev/null || git switch "$BRANCH"
+git add src/main.cpp
+git commit -m "feat(vad): Step 04B — add main.cpp (VAD CLI + offline validator)"
+git push -u origin "$BRANCH"
+
+# Print PR URL helper
+REMOTE_URL=$(git config --get remote.origin.url || echo "")
+if [[ "$REMOTE_URL" == git@github.com:* ]]; then
+  REPO_PATH="${REMOTE_URL#git@github.com:}"
+  REPO_PATH="${REPO_PATH%.git}"
+  echo
+  echo "Open PR:"
+  echo "  https://github.com/${REPO_PATH}/compare/main...${BRANCH}?expand=1"
+elif [[ "$REMOTE_URL" == https://github.com/* ]]; then
+  REPO_PATH="${REMOTE_URL#https://github.com/}"
+  REPO_PATH="${REPO_PATH%.git}"
+  echo
+  echo "Open PR:"
+  echo "  https://github.com/${REPO_PATH}/compare/main...${BRANCH}?expand=1"
+else
+  echo
+  echo "Now open a PR from branch ${BRANCH} -> main."
+fi
