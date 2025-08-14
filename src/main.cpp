@@ -6,7 +6,15 @@
 #include <cctype>
 #include <limits>
 #include <iomanip>
+#if __has_include(<filesystem>)
 #include <filesystem>
+namespace fs = std::filesystem;
+#elif __has_include(<experimental/filesystem>)
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#else
+#error "No filesystem support"
+#endif
 #include <chrono>
 #include <ctime>
 #include <sstream>
@@ -17,6 +25,12 @@
 #include "Vad.h"
 #include "nlohmann/json.hpp"
 #include "dr_wav.h"
+
+// --- Forward decls from Utils.h (compat) ---
+std::vector<int16_t> generateSineWave(double, int, double);
+bool saveWav(const std::string&, const std::vector<int16_t>&, int32_t);
+std::vector<int16_t> resample(const std::vector<int16_t>&, double, double);
+
 
 // --- config minimale (fallback si pas d'Env.h)
 struct AppCfg {
@@ -213,9 +227,9 @@ static void generateVadFixture(const std::string& path) {
     silence.assign(static_cast<size_t>(sample_rate * 0.7), 0);
     pcm.insert(pcm.end(), silence.begin(), silence.end());
 
-    std::filesystem::path p(path);
-    if (p.has_parent_path() && !std::filesystem::exists(p.parent_path())) {
-        std::filesystem::create_directories(p.parent_path());
+    fs::path p(path);
+    if (p.has_parent_path() && !fs::exists(p.parent_path())) {
+        fs::create_directories(p.parent_path());
     }
 
     saveWav(path, pcm, sample_rate);
@@ -289,9 +303,9 @@ static void runVadOffline(const Args& args) {
 
         std::vector<int16_t> segment_pcm(pcm.begin() + start_sample, pcm.begin() + end_sample);
         
-        std::filesystem::path captures_dir("captures");
-        if (!std::filesystem::exists(captures_dir)) {
-            std::filesystem::create_directory(captures_dir);
+        fs::path captures_dir("captures");
+        if (!fs::exists(captures_dir)) {
+            fs::create_directory(captures_dir);
         }
         saveWav("captures/vad_first.wav", segment_pcm, sampleRate);
     }
@@ -346,20 +360,20 @@ int main(int argc, char** argv) {
         if (!args.saveWavPath.empty()) {
             std::string finalPath = args.saveWavPath;
             try {
-                if (std::filesystem::is_directory(finalPath)) {
+                if (fs::is_directory(finalPath)) {
                     // Create captures/ if it doesn't exist
-                    std::filesystem::path dir = finalPath;
+                    fs::path dir = finalPath;
                     if (dir.filename() == "." || dir.filename() == "..") { // e.g. "captures/"
-                       dir = std::filesystem::path(finalPath);
+                       dir = fs::path(finalPath);
                     } else if (finalPath.back() == '/' || finalPath.back() == '\\') {
-                       dir = std::filesystem::path(finalPath);
+                       dir = fs::path(finalPath);
                     } else {
                        // This case is ambiguous, but let's assume it's a directory
-                       dir = std::filesystem::path(finalPath);
+                       dir = fs::path(finalPath);
                     }
 
-                    if (!std::filesystem::exists(dir)) {
-                        std::filesystem::create_directories(dir);
+                    if (!fs::exists(dir)) {
+                        fs::create_directories(dir);
                     }
 
                     auto now = std::chrono::system_clock::now();
@@ -377,16 +391,16 @@ int main(int argc, char** argv) {
                 // If it's a file path, we'll just use it.
                 // Ensure parent directory exists for file paths too.
                 else {
-                    std::filesystem::path p(finalPath);
-                    if (p.has_parent_path() && !std::filesystem::exists(p.parent_path())) {
-                        std::filesystem::create_directories(p.parent_path());
+                    fs::path p(finalPath);
+                    if (p.has_parent_path() && !fs::exists(p.parent_path())) {
+                        fs::create_directories(p.parent_path());
                     }
                 }
-            } catch (const std::filesystem::filesystem_error& e) {
+            } catch (const fs::filesystem_error& e) {
                 // If path is not a valid directory or file name (e.g. "captures"), it throws.
                 // In this case, we treat it as a directory to be created.
-                std::filesystem::path dir(finalPath);
-                std::filesystem::create_directories(dir);
+                fs::path dir(finalPath);
+                fs::create_directories(dir);
 
                 auto now = std::chrono::system_clock::now();
                 auto in_time_t = std::chrono::system_clock::to_time_t(now);

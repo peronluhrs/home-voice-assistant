@@ -18,6 +18,8 @@ set(SRCS
   src/Env.cpp
   src/OpenAIClient.cpp
   src/Utils.cpp
+  src/Vad.cpp
+  src/dr_wav_impl.cpp
 )
 
 # Audio / ASR / TTS optionnels (n'ajoute les .cpp que si l'option est active)
@@ -83,3 +85,16 @@ if (WITH_VOSK)
 endif()
 
 # Whisper/Piper : rien à lier par défaut (whisper: à brancher plus tard ; piper: CLI externe)
+
+# --- FS compatibility link for old GCC ---
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+    target_link_libraries(home_assistant PRIVATE stdc++fs)
+  endif()
+endif()
+
+# --- Ensure VAD + dr_wav implementation are compiled ---
+target_sources(home_assistant PRIVATE
+  src/Vad.cpp
+  src/dr_wav_impl.cpp
+)
