@@ -14,6 +14,7 @@
 #include "OpenAIClient.h"
 #include "Audio.h"
 #include "Utils.h"
+#include "Memory.h"
 
 #ifdef WITH_VOSK
 #include "AsrVosk.h"
@@ -44,6 +45,31 @@ static AppCfg loadCfg(const std::string& path) {
         if (k=="API_BASE") c.apiBase=v; else if (k=="API_KEY") c.apiKey=v; else if (k=="MODEL") c.model=v;
     }
     return c;
+}
+
+// Generates a timestamp string.
+static std::string generateTimestamp(const std::string& format = "%Y-%m-%dT%H:%M:%SZ") {
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &in_time_t);
+#else
+    localtime_r(&in_time_t, &tm_buf);
+#endif
+    std::stringstream ss;
+    ss << std::put_time(&tm_buf, format.c_str());
+    return ss.str();
+}
+
+static std::string intentTypeToString(IntentType type) {
+    switch (type) {
+        case IntentType::NONE: return "NONE";
+        case IntentType::NOTE_ADD: return "NOTE_ADD";
+        case IntentType::REMINDER_ADD: return "REMINDER_ADD";
+        case IntentType::FACT_SET: return "FACT_SET";
+        default: return "UNKNOWN";
+    }
 }
 
 #ifdef WITH_AUDIO
@@ -129,6 +155,13 @@ struct Args {
     std::string remWhen;
     bool remList = false;
     std::string remDone;
+
+    // Conversation loop options
+    bool loop = false;
+    int loopMaxTurns = 0;
+    int loopPttSeconds = 10;
+    std::string loopSaveWavs;
+    std::string logJsonl;
 };
 
 static void printHelp() {
@@ -167,7 +200,13 @@ static void printHelp() {
               << "  --rem-add \"<text>\"    Add a reminder.\n"
               << "  --rem-when <ISO>      Set the time for the next reminder (e.g., 2024-05-20T10:00:00).\n"
               << "  --rem-list            List all reminders.\n"
-              << "  --rem-done <id>       Mark a reminder as done.\n";
+              << "  --rem-done <id>       Mark a reminder as done.\n\n"
+              << "Conversation Loop Options:\n"
+              << "  --loop                Start the interactive conversation loop.\n"
+              << "  --loop-max-turns <N>  Exit after N turns (default: 0 = unlimited).\n"
+              << "  --loop-ptt-seconds <N>  Fallback cap if VAD doesn’t stop (default: 10s).\n"
+              << "  --loop-save-wavs <dir> If set, save input WAVs + TTS WAVs in that dir.\n"
+              << "  --log-jsonl <path>    Append JSONL logs of each turn.\n";
 }
 
 static Args parseArgs(int argc, char** argv) {
@@ -211,6 +250,12 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--rem-when") next(a.remWhen);
         else if (s == "--rem-list") a.remList = true;
         else if (s == "--rem-done") next(a.remDone);
+        // Loop args
+        else if (s == "--loop") a.loop = true;
+        else if (s == "--loop-max-turns") { std::string v; next(v); a.loopMaxTurns = std::max(0, std::atoi(v.c_str())); }
+        else if (s == "--loop-ptt-seconds") { std::string v; next(v); a.loopPttSeconds = std::max(1, std::atoi(v.c_str())); }
+        else if (s == "--loop-save-wavs") next(a.loopSaveWavs);
+        else if (s == "--log-jsonl") next(a.logJsonl);
     }
     // --say implies --with-piper
     if (!a.say.empty()) {
@@ -224,6 +269,241 @@ int main(int argc, char** argv) {
 
     if (args.help) {
         printHelp();
+        return 0;
+    }
+
+    if (args.loop) {
+        std::cout << "[loop] Starting conversation loop..." << std::endl;
+
+#ifdef WITH_AUDIO
+        Audio audio; // RAII for PortAudio
+        int inIdx = -1, outIdx = -1;
+        if (args.withAudio) {
+            inIdx = Audio::findDevice(args.inKey, false);
+            if (!args.inKey.empty() && inIdx == -1) {
+                std::cerr << "Error: Could not find requested input device: " << args.inKey << std::endl;
+                return 1;
+            }
+            outIdx = Audio::findDevice(args.outKey, true);
+            if (!args.outKey.empty() && outIdx == -1) {
+                std::cerr << "Error: Could not find requested output device: " << args.outKey << std::endl;
+                return 1;
+            }
+        }
+#endif
+
+#ifdef WITH_VOSK
+        AsrVosk asr(args.voskModel);
+        if (args.withVosk && !asr.isAvailable()) {
+            std::cerr << "[asr] Vosk is enabled but model not loaded: " << asr.lastError() << ". ASR will be skipped." << std::endl;
+        }
+#endif
+
+#ifdef WITH_PIPER
+        TtsPiper piper(args.piperModel, args.piperBin);
+        if (args.withPiper && !piper.isAvailable()) {
+            std::cerr << "[tts] Piper is enabled but not available: " << piper.lastError() << ". TTS will be skipped." << std::endl;
+        }
+#endif
+
+        MemoryStore mem;
+        mem.load();
+
+        AppCfg cfg = loadCfg("config/app.env");
+        const char* e;
+        if ((e=getenv("API_BASE"))) cfg.apiBase = e;
+        if ((e=getenv("API_KEY" ))) cfg.apiKey  = e;
+        if ((e=getenv("MODEL"   ))) cfg.model   = e;
+        OpenAIClient client(cfg.apiBase, cfg.apiKey, cfg.model, args.offline);
+        std::cout << "[cfg] API_BASE=" << cfg.apiBase << " MODEL=" << cfg.model << "\n";
+
+        for (int turn = 1; args.loopMaxTurns == 0 || turn <= args.loopMaxTurns; ++turn) {
+            std::cout << "\n--- Turn " << turn << " ---" << std::endl;
+
+            std::vector<int16_t> pcm_data;
+            double sample_rate = args.sampleRateIn;
+            std::string input_wav_path;
+
+#ifdef WITH_AUDIO
+            if (args.withAudio) {
+                std::cout << "[audio] Press Enter to start recording (" << args.loopPttSeconds << "s max)... " << std::flush;
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                std::cout << "Recording..." << std::endl;
+
+                audio.recordPtt(inIdx, args.loopPttSeconds, sample_rate, pcm_data);
+
+                if (pcm_data.empty()) {
+                    std::cout << "[audio] No audio recorded, skipping turn." << std::endl;
+                    continue;
+                }
+                std::cout << "[audio] Recorded " << pcm_data.size() << " samples." << std::endl;
+
+                if (!args.loopSaveWavs.empty()) {
+                    std::filesystem::path save_dir(args.loopSaveWavs);
+                    try {
+                        if (!std::filesystem::exists(save_dir)) {
+                            std::filesystem::create_directories(save_dir);
+                        }
+                        std::string timestamp = generateTimestamp("%Y%m%d_%H%M%S");
+                        std::string filename = "input_" + timestamp + ".wav";
+                        std::filesystem::path full_path = save_dir / filename;
+                        input_wav_path = full_path.string();
+                        if (saveWav(input_wav_path, pcm_data, static_cast<int32_t>(sample_rate))) {
+                            std::cout << "[audio] Input saved to " << input_wav_path << std::endl;
+                        } else {
+                            std::cerr << "[audio] Failed to save WAV to " << input_wav_path << std::endl;
+                            input_wav_path = "";
+                        }
+                    } catch (const std::filesystem::filesystem_error& e) {
+                         std::cerr << "[io] Error with path " << args.loopSaveWavs << ": " << e.what() << std::endl;
+                         input_wav_path = "";
+                    }
+                }
+            }
+#endif
+
+            std::string userText;
+
+#ifdef WITH_VOSK
+            if (args.withVosk && asr.isAvailable()) {
+                if (!pcm_data.empty()) {
+                    std::cout << "[asr] Transcribing..." << std::endl;
+                    userText = asr.transcribe(pcm_data, sample_rate);
+                    std::cout << "[asr] Transcript: \"" << userText << "\"" << std::endl;
+                }
+            }
+#endif
+
+            // If transcription is empty (e.g. silence, or ASR not used/available)
+            if (userText.empty()) {
+                if (args.offline) {
+                    // This handles no-audio offline mode for the smoke test.
+                    userText = "(no speech)";
+                } else {
+                    std::cout << "[loop] No user text, skipping to next turn." << std::endl;
+                    continue;
+                }
+            }
+
+            std::string assistantText;
+
+            // 3. Intent/memory
+            Intent intent = parseIntent(userText);
+            if (intent.type != IntentType::NONE) {
+                std::cout << "[intent] Recognized intent " << static_cast<int>(intent.type) << std::endl;
+                bool mem_changed = false;
+                switch (intent.type) {
+                    case IntentType::NOTE_ADD:
+                        mem.addNote(intent.text);
+                        assistantText = "Note enregistrée.";
+                        mem_changed = true;
+                        break;
+                    case IntentType::REMINDER_ADD:
+                        mem.addReminder(intent.text, intent.when_iso);
+                        assistantText = "Rappel ajouté pour " + intent.when_iso + ".";
+                        mem_changed = true;
+                        break;
+                    case IntentType::FACT_SET:
+                        mem.set(intent.key, intent.value);
+                        assistantText = "Ok, j'ai noté " + intent.key + "=" + intent.value + ".";
+                        mem_changed = true;
+                        break;
+                    case IntentType::NONE: break;
+                }
+
+                if (mem_changed) {
+                    mem.save();
+                }
+            } else {
+                // 4. LLM reply
+                if (args.offline) {
+                    assistantText = "(offline) Echo: " + userText;
+                } else {
+                    std::cout << "[llm] Sending to OpenAI..." << std::endl;
+                    ChatResult r = client.chatOnce(userText);
+                    if (r.ok) {
+                        assistantText = r.text;
+                    } else {
+                        assistantText = "[error] " + (!r.error.empty() ? r.error : r.text);
+                        std::cerr << "[llm] " << assistantText << std::endl;
+                    }
+                }
+                std::cout << "[llm] Assistant reply: \"" << assistantText << "\"" << std::endl;
+            }
+
+            // 5. TTS
+            bool tts_done = false;
+#ifdef WITH_PIPER
+            if (args.withPiper && piper.isAvailable()) {
+                if (!assistantText.empty()) {
+                    std::cout << "[tts] Synthesizing..." << std::endl;
+                    double tts_sample_rate = 0;
+                    std::vector<int16_t> tts_pcm = piper.synthesize(assistantText, tts_sample_rate);
+
+                    if (!tts_pcm.empty()) {
+                        tts_done = true;
+#ifdef WITH_AUDIO
+                        if (args.withAudio) {
+                            std::cout << "[audio] Playing TTS..." << std::endl;
+                            audio.playback(outIdx, tts_sample_rate, tts_pcm);
+                        }
+#endif
+                        if (!args.loopSaveWavs.empty()) {
+                            std::filesystem::path save_dir(args.loopSaveWavs);
+                             try {
+                                if (!std::filesystem::exists(save_dir)) {
+                                    std::filesystem::create_directories(save_dir);
+                                }
+                                std::string timestamp = generateTimestamp("%Y%m%d_%H%M%S");
+                                std::string filename = "tts_" + timestamp + ".wav";
+                                std::filesystem::path full_path = save_dir / filename;
+                                if (saveWav(full_path.string(), tts_pcm, static_cast<int32_t>(tts_sample_rate))) {
+                                    std::cout << "[tts] TTS audio saved to " << full_path.string() << std::endl;
+                                } else {
+                                    std::cerr << "[tts] Failed to save TTS WAV to " << full_path.string() << std::endl;
+                                }
+                            } catch (const std::filesystem::filesystem_error& e) {
+                                std::cerr << "[io] Error with path " << args.loopSaveWavs << ": " << e.what() << std::endl;
+                            }
+                        }
+                    } else {
+                        std::cerr << "[tts] TTS synthesis failed: " << piper.lastError() << std::endl;
+                    }
+                }
+            }
+#endif
+            if (!tts_done && !assistantText.empty()) {
+                // Fallback for no TTS
+                std::cout << "ASSISTANT: " << assistantText << std::endl;
+            }
+
+            // 6. Logging
+            if (!args.logJsonl.empty()) {
+                nlohmann::json log_entry;
+                log_entry["ts"] = generateTimestamp("%Y-%m-%dT%H:%M:%SZ");
+                log_entry["input_wav"] = !input_wav_path.empty() ? input_wav_path : nlohmann::json(nullptr);
+                log_entry["transcript"] = userText;
+
+                nlohmann::json intent_json;
+                intent_json["type"] = intentTypeToString(intent.type);
+                intent_json["key"] = (intent.type == IntentType::FACT_SET) ? intent.key : nlohmann::json(nullptr);
+                intent_json["value"] = (intent.type == IntentType::FACT_SET) ? intent.value : nlohmann::json(nullptr);
+                intent_json["when_iso"] = (intent.type == IntentType::REMINDER_ADD) ? intent.when_iso : nlohmann::json(nullptr);
+                log_entry["intent"] = intent_json;
+
+                log_entry["assistant_text"] = assistantText;
+                log_entry["tts_done"] = tts_done;
+
+                std::ofstream log_file(args.logJsonl, std::ios::app);
+                if (log_file) {
+                    log_file << log_entry.dump() << std::endl;
+                } else {
+                    std::cerr << "[log] Failed to open log file for appending: " << args.logJsonl << std::endl;
+                }
+            }
+        }
+
+        std::cout << "[loop] Loop finished." << std::endl;
         return 0;
     }
 
