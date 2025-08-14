@@ -91,6 +91,8 @@ static void printDeviceList() {
 #include "TtsPiper.h"
 #endif
 
+#include "Memory.h"
+
 struct Args {
     bool help = false;
     bool offline = false;
@@ -114,6 +116,19 @@ struct Args {
     bool ptt = false;
     std::string saveWavPath;
     double sampleRateIn = 16000.0;
+
+    // Memory store options
+    std::vector<std::string> memSet;
+    std::string memGet;
+    std::string memDel;
+    bool memList = false;
+    std::string noteAdd;
+    bool noteList = false;
+    std::string noteDel;
+    std::string remAdd;
+    std::string remWhen;
+    bool remList = false;
+    std::string remDone;
 };
 
 static void printHelp() {
@@ -140,7 +155,19 @@ static void printHelp() {
               << "  --with-piper          Enable Piper TTS (requires build with -DWITH_PIPER=ON).\n"
               << "  --piper-bin <path>    Optional path to the 'piper' executable.\n"
               << "  --piper-model <path>  Path to the Piper TTS model file (.onnx), required if --with-piper.\n"
-              << "  --say \"<text>\"        Synthesize and speak text using Piper, then exit.\n";
+              << "  --say \"<text>\"        Synthesize and speak text using Piper, then exit.\n\n"
+              << "Memory/State Options:\n"
+              << "  --mem-set <key> <val> Set a key-value fact.\n"
+              << "  --mem-get <key>       Get a key-value fact.\n"
+              << "  --mem-del <key>       Delete a key-value fact.\n"
+              << "  --mem-list            List all key-value facts.\n"
+              << "  --note-add \"<text>\"   Add a note.\n"
+              << "  --note-list           List all notes.\n"
+              << "  --note-del <id>       Delete a note by its ID.\n"
+              << "  --rem-add \"<text>\"    Add a reminder.\n"
+              << "  --rem-when <ISO>      Set the time for the next reminder (e.g., 2024-05-20T10:00:00).\n"
+              << "  --rem-list            List all reminders.\n"
+              << "  --rem-done <id>       Mark a reminder as done.\n";
 }
 
 static Args parseArgs(int argc, char** argv) {
@@ -172,6 +199,18 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--piper-bin") next(a.piperBin);
         else if (s == "--piper-model") next(a.piperModel);
         else if (s == "--say") next(a.say);
+        // Memory args
+        else if (s == "--mem-set") { if (i + 2 < argc) { a.memSet.push_back(argv[++i]); a.memSet.push_back(argv[++i]); } }
+        else if (s == "--mem-get") next(a.memGet);
+        else if (s == "--mem-del") next(a.memDel);
+        else if (s == "--mem-list") a.memList = true;
+        else if (s == "--note-add") next(a.noteAdd);
+        else if (s == "--note-list") a.noteList = true;
+        else if (s == "--note-del") next(a.noteDel);
+        else if (s == "--rem-add") next(a.remAdd);
+        else if (s == "--rem-when") next(a.remWhen);
+        else if (s == "--rem-list") a.remList = true;
+        else if (s == "--rem-done") next(a.remDone);
     }
     // --say implies --with-piper
     if (!a.say.empty()) {
@@ -185,6 +224,88 @@ int main(int argc, char** argv) {
 
     if (args.help) {
         printHelp();
+        return 0;
+    }
+
+    // --- Memory CLI flags ---
+    bool isMemoryOp = !args.memSet.empty() || !args.memGet.empty() || !args.memDel.empty() || args.memList
+                   || !args.noteAdd.empty() || args.noteList || !args.noteDel.empty()
+                   || !args.remAdd.empty() || args.remList || !args.remDone.empty();
+
+    if (isMemoryOp) {
+        MemoryStore mem;
+        mem.load();
+
+        bool changed = false;
+
+        if (!args.memSet.empty()) {
+            mem.set(args.memSet[0], args.memSet[1]);
+            std::cout << "Set fact: " << args.memSet[0] << " = " << args.memSet[1] << std::endl;
+            changed = true;
+        } else if (!args.memGet.empty()) {
+            std::string value;
+            if (mem.get(args.memGet, value)) {
+                std::cout << value << std::endl;
+            } else {
+                std::cerr << "Fact not found: " << args.memGet << std::endl;
+                return 1;
+            }
+        } else if (!args.memDel.empty()) {
+            if (mem.del(args.memDel)) {
+                std::cout << "Deleted fact: " << args.memDel << std::endl;
+                changed = true;
+            } else {
+                std::cerr << "Fact not found: " << args.memDel << std::endl;
+                return 1;
+            }
+        } else if (args.memList) {
+            auto facts = mem.listFacts();
+            nlohmann::json j = nlohmann::json::object();
+            for(const auto& p : facts) j[p.first] = p.second;
+            std::cout << j.dump(2) << std::endl;
+        } else if (!args.noteAdd.empty()) {
+            std::string id = mem.addNote(args.noteAdd);
+            std::cout << "Added note with ID: " << id << std::endl;
+            changed = true;
+        } else if (args.noteList) {
+            auto notes = mem.listNotes();
+            nlohmann::json j = nlohmann::json::array();
+            for(const auto& n : notes) {
+                j.push_back({{"id", n.id}, {"text", n.text}, {"created_at", n.created_at}});
+            }
+            std::cout << j.dump(2) << std::endl;
+        } else if (!args.noteDel.empty()) {
+            if (mem.deleteNote(args.noteDel)) {
+                std::cout << "Deleted note: " << args.noteDel << std::endl;
+                changed = true;
+            } else {
+                std::cerr << "Note not found: " << args.noteDel << std::endl;
+                return 1;
+            }
+        } else if (!args.remAdd.empty()) {
+            std::string id = mem.addReminder(args.remAdd, args.remWhen);
+            std::cout << "Added reminder with ID: " << id << std::endl;
+            changed = true;
+        } else if (args.remList) {
+            auto reminders = mem.listReminders();
+            nlohmann::json j = nlohmann::json::array();
+            for(const auto& r : reminders) {
+                j.push_back({{"id", r.id}, {"text", r.text}, {"when_iso", r.when_iso}, {"done", r.done}});
+            }
+            std::cout << j.dump(2) << std::endl;
+        } else if (!args.remDone.empty()) {
+            if (mem.completeReminder(args.remDone)) {
+                std::cout << "Completed reminder: " << args.remDone << std::endl;
+                changed = true;
+            } else {
+                std::cerr << "Reminder not found: " << args.remDone << std::endl;
+                return 1;
+            }
+        }
+
+        if (changed) {
+            mem.save();
+        }
         return 0;
     }
 
@@ -428,6 +549,9 @@ int main(int argc, char** argv) {
 
     OpenAIClient client(cfg.apiBase, cfg.apiKey, cfg.model);
 
+    MemoryStore mem;
+    mem.load();
+
 #ifdef WITH_AUDIO
     if (args.withAudio || !args.outKey.empty()) {
         int inIdx = -1, outIdx = -1;
@@ -481,6 +605,36 @@ int main(int argc, char** argv) {
         std::cout << "you> ";
         if (!std::getline(std::cin, line)) break;
         if (line == "/exit") { std::cout << "[assistant] au revoir.\n"; break; }
+
+        // --- Intent parsing ---
+        Intent intent = parseIntent(line);
+        bool changed = false;
+        switch(intent.type) {
+            case IntentType::NOTE_ADD:
+                mem.addNote(intent.text);
+                std::cout << "assistant> OK, j'ai noté." << std::endl;
+                changed = true;
+                break;
+            case IntentType::REMINDER_ADD:
+                mem.addReminder(intent.text, intent.when_iso);
+                std::cout << "assistant> OK, je m'en souviendrai." << std::endl;
+                changed = true;
+                break;
+            case IntentType::FACT_SET:
+                mem.set(intent.key, intent.value);
+                std::cout << "assistant> OK, c'est noté: " << intent.key << " est " << intent.value << "." << std::endl;
+                changed = true;
+                break;
+            case IntentType::NONE:
+                // No intent, proceed to chat
+                break;
+        }
+
+        if (changed) {
+            mem.save();
+            continue;
+        }
+
         if (args.offline) { std::cout << "assistant> (offline) Echo: " << line << "\n"; continue; }
         ChatResult r = client.chatOnce(line);
         if (!r.ok) std::cout << "assistant> [error] " << (!r.error.empty()?r.error:r.text) << "\n";

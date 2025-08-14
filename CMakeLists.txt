@@ -19,6 +19,7 @@ set(SRCS
   src/OpenAIClient.cpp
   src/Utils.cpp
   src/dr_wav_impl.cpp
+  src/Memory.cpp
 )
 
 # Audio / ASR / TTS optionnels (n'ajoute les .cpp que si l'option est active)
