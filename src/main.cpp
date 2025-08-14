@@ -78,6 +78,10 @@ static void printDeviceList() {
 }
 #endif
 
+#ifdef WITH_PIPER
+#include "TtsPiper.h"
+#endif
+
 struct Args {
     bool help = false;
     bool offline = false;
@@ -85,7 +89,12 @@ struct Args {
     bool listDevices = false;
     int recordSeconds = 5;
     std::string inKey, outKey;
-    std::string voskModel, piperModel;
+    std::string voskModel;
+    // Piper options
+    bool withPiper = false;
+    std::string piperBin;
+    std::string piperModel;
+    std::string say;
 };
 
 static void printHelp() {
@@ -96,14 +105,16 @@ static void printHelp() {
               << "Audio Options (require building with -DWITH_AUDIO=ON):\n"
               << "  --with-audio          Enable audio input/output via PortAudio.\n"
               << "  --list-devices        List available audio devices and exit.\n"
-              << "  --input-device <key>  Keyword or index for input device (default: system default).\n"
-              << "  --output-device <key> Keyword or index for output device (default: system default).\n"
+              << "  --input-device <key>  Keyword or index for input device.\n"
+              << "  --output-device <key> Keyword or index for output device.\n"
               << "  --record-seconds <N>  Duration of audio recording in seconds (default: 5).\n\n"
               << "ASR/TTS Options:\n"
-              << "  --with-vosk           (Build-time) Enable Vosk ASR. Requires -DWITH_VOSK=ON.\n"
+              << "  --with-vosk           Enable Vosk ASR (requires build with -DWITH_VOSK=ON).\n"
               << "  --vosk-model <path>   Path to the Vosk model directory.\n"
-              << "  --with-piper          (Build-time) Enable Piper TTS. Requires -DWITH_PIPER=ON.\n"
-              << "  --piper-model <path>  Path to the Piper TTS model file (.onnx).\n";
+              << "  --with-piper          Enable Piper TTS (requires build with -DWITH_PIPER=ON).\n"
+              << "  --piper-bin <path>    Optional path to the 'piper' executable.\n"
+              << "  --piper-model <path>  Path to the Piper TTS model file (.onnx), required if --with-piper.\n"
+              << "  --say \"<text>\"        Synthesize and speak text using Piper, then exit.\n";
 }
 
 static Args parseArgs(int argc, char** argv) {
@@ -111,6 +122,7 @@ static Args parseArgs(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         std::string s = argv[i];
         auto next = [&](std::string& dst){ if (i + 1 < argc) dst = argv[++i]; };
+
         if (s == "--help") a.help = true;
         else if (s == "--offline") a.offline = true;
         else if (s == "--with-audio") a.withAudio = true;
@@ -119,7 +131,16 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--input-device") next(a.inKey);
         else if (s == "--output-device") next(a.outKey);
         else if (s == "--vosk-model") next(a.voskModel);
+        // Piper args
+        else if (s == "--with-piper") a.withPiper = true;
+        else if (s == "--piper-bin") next(a.piperBin);
         else if (s == "--piper-model") next(a.piperModel);
+        else if (s == "--say") next(a.say);
+    }
+    // --say implies --with-piper and --with-audio
+    if (!a.say.empty()) {
+        a.withPiper = true;
+        a.withAudio = true;
     }
     return a;
 }
@@ -139,6 +160,46 @@ int main(int argc, char** argv) {
         printDeviceList();
         return 0;
     }
+
+#if defined(WITH_PIPER) && defined(WITH_AUDIO)
+    if (args.withPiper && !args.say.empty()) {
+        if (args.piperModel.empty()) {
+            std::cerr << "Error: --piper-model <path> is required when using --say." << std::endl;
+            return 1;
+        }
+
+        try {
+            TtsPiper piper(args.piperModel, args.piperBin);
+            if (!piper.isAvailable()) {
+                // isAvailable() already prints detailed errors
+                return 1;
+            }
+
+            std::cout << "[main] Synthesizing text: \"" << args.say << "\"" << std::endl;
+            double sampleRate = 0;
+            std::vector<int16_t> pcm = piper.synthesize(args.say, sampleRate);
+
+            if (pcm.empty()) {
+                std::cerr << "Error: TTS synthesis failed or produced empty audio." << std::endl;
+                return 1;
+            }
+
+            int outIdx = Audio::findDevice(args.outKey, true);
+            if (!args.outKey.empty() && outIdx == -1) {
+                std::cerr << "Error: Could not find requested output device: " << args.outKey << std::endl;
+                return 1;
+            }
+
+            std::cout << "[audio] Using output device index: " << outIdx << std::endl;
+            audio.playback(outIdx, sampleRate, pcm);
+
+        } catch (const std::runtime_error& e) {
+            std::cerr << "An error occurred during TTS processing: " << e.what() << std::endl;
+            return 1;
+        }
+        return 0; // Exit after --say is handled
+    }
+#endif
 #endif
 
     AppCfg cfg = loadCfg("config/app.env");
