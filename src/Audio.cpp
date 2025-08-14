@@ -11,6 +11,32 @@
 
 // --- Private Helper Functions ---
 
+// Simple linear interpolation for resampling
+static std::vector<int16_t> resample(const std::vector<int16_t>& in, double in_rate, double out_rate) {
+    if (in_rate == out_rate) {
+        return in;
+    }
+    double ratio = in_rate / out_rate;
+    size_t out_len = static_cast<size_t>(in.size() / ratio);
+    std::vector<int16_t> out(out_len);
+
+    for (size_t i = 0; i < out_len; ++i) {
+        double in_idx_f = i * ratio;
+        size_t in_idx_i = static_cast<size_t>(in_idx_f);
+        double frac = in_idx_f - in_idx_i;
+
+        if (in_idx_i + 1 < in.size()) {
+            double v1 = in[in_idx_i];
+            double v2 = in[in_idx_i + 1];
+            out[i] = static_cast<int16_t>(v1 + (v2 - v1) * frac);
+        } else {
+            out[i] = in.back();
+        }
+    }
+    std::cout << "[audio] Resampled from " << in.size() << " samples to " << out.size() << " samples." << std::endl;
+    return out;
+}
+
 // Checks a list of standard sample rates for compatibility.
 std::vector<double> Audio::getSupportedSampleRates(const PaDeviceInfo* deviceInfo) {
     std::vector<double> supportedRates;
@@ -291,23 +317,45 @@ bool Audio::playback(int deviceId, double sampleRate, const std::vector<int16_t>
         return false;
     }
 
-    double actualRate = pickSupportedRate(dev, true, sampleRate);
-    if (actualRate <= 0) {
-        std::cerr << "[audio] Could not find a supported sample rate for playback.\n";
-        return false;
-    }
-    if (actualRate != sampleRate) {
-        std::cout << "[audio] Warning: Playback sample rate (" << actualRate << ") differs from buffer rate (" << sampleRate << "). Sound may be distorted.\n";
-    }
-
-    PaStream* stream = nullptr;
-    PaStreamParameters outParams{};
+    // Find the best rate, preferring the native TTS rate
+    const double ratesToTry[] = { sampleRate, 48000.0, 44100.0, 32000.0, 16000.0 };
+    double actualRate = -1.0;
     const PaDeviceInfo* di = Pa_GetDeviceInfo(dev);
+    PaStreamParameters outParams{};
     outParams.device = dev;
     outParams.channelCount = 1;
     outParams.sampleFormat = paInt16;
     outParams.suggestedLatency = di ? di->defaultLowOutputLatency : 0.050;
 
+    for (double rate : ratesToTry) {
+        if (rate > 0 && Pa_IsFormatSupported(NULL, &outParams, rate) == paFormatIsSupported) {
+            actualRate = rate;
+            break;
+        }
+    }
+
+    if (actualRate <= 0) {
+        std::cerr << "[audio] Could not find any supported sample rate for playback on device " << dev << ".\n";
+        return false;
+    }
+
+    // Log TTS and effective rates
+    std::cout << "[audio] TTS sample rate: " << sampleRate << " Hz\n";
+    std::cout << "[audio] Effective playback rate: " << actualRate << " Hz\n";
+
+    // Resample if necessary
+    std::vector<int16_t> resampled_buffer;
+    const std::vector<int16_t>* buffer_to_play = &buffer;
+
+    if (actualRate != sampleRate) {
+        std::cout << "[audio] Resampling: yes\n";
+        resampled_buffer = resample(buffer, sampleRate, actualRate);
+        buffer_to_play = &resampled_buffer;
+    } else {
+        std::cout << "[audio] Resampling: no\n";
+    }
+
+    PaStream* stream = nullptr;
     PaError err = Pa_OpenStream(&stream, nullptr, &outParams, actualRate, paFramesPerBufferUnspecified, paNoFlag, nullptr, nullptr);
     if (err != paNoError || !stream) {
         std::cerr << "[audio] PortAudio error (Pa_OpenStream, playback): " << Pa_GetErrorText(err) << "\n";
@@ -321,18 +369,17 @@ bool Audio::playback(int deviceId, double sampleRate, const std::vector<int16_t>
     }
 
     std::cout << "[audio] Playing back audio...\n";
-    err = Pa_WriteStream(stream, buffer.data(), (unsigned long)buffer.size());
-    if (err != paNoError) {
+    err = Pa_WriteStream(stream, buffer_to_play->data(), (unsigned long)buffer_to_play->size());
+    if (err != paNoError && err != paOutputUnderflowed) {
         std::cerr << "[audio] PortAudio error (Pa_WriteStream): " << Pa_GetErrorText(err) << "\n";
     }
 
-    // Wait for playback to finish
-    Pa_Sleep((long)(buffer.size() / actualRate * 1000));
+    Pa_Sleep((long)(buffer_to_play->size() * 1000 / actualRate));
 
     Pa_StopStream(stream);
     Pa_CloseStream(stream);
     std::cout << "[audio] Playback finished.\n";
-    return err == paNoError;
+    return err == paNoError || err == paOutputUnderflowed;
 #else
     (void)deviceId; (void)sampleRate; (void)buffer;
     return false;
