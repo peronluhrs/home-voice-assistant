@@ -1,6 +1,6 @@
 
 # Build artifacts
-/build/
+/build*/
 /out/
 /dist/
 /cmake-build-*/
@@ -19,7 +19,7 @@ CMakeCache.txt
 *.log
 
 # VSCode
-.vscode/
+.vscode
 .ipynb_checkpoints/
 
 # OS files
