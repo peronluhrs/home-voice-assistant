@@ -173,10 +173,9 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--piper-model") next(a.piperModel);
         else if (s == "--say") next(a.say);
     }
-    // --say implies --with-piper and --with-audio
+    // --say implies --with-piper
     if (!a.say.empty()) {
         a.withPiper = true;
-        a.withAudio = true;
     }
     return a;
 }
@@ -225,6 +224,61 @@ int main(int argc, char** argv) {
             }
         }
         return 0;
+    }
+#endif
+
+#ifdef WITH_PIPER
+    // --- Standalone TTS (--say) ---
+    if (args.withPiper && !args.say.empty()) {
+        if (args.piperModel.empty()) {
+            std::cerr << "Error: --piper-model <path> is required for --say." << std::endl;
+            return 1;
+        }
+
+        TtsPiper piper(args.piperModel, args.piperBin);
+        if (!piper.isAvailable()) {
+            std::cerr << "Error: Piper is not available. " << piper.lastError() << std::endl;
+            return 1;
+        }
+
+        std::cout << "[tts] Synthesizing text: \"" << args.say << "\"" << std::endl;
+        double sampleRate = 0;
+        std::vector<int16_t> pcm = piper.synthesize(args.say, sampleRate);
+
+        if (pcm.empty()) {
+            std::cerr << "Error: TTS synthesis failed. " << piper.lastError() << std::endl;
+            return 1;
+        }
+
+        std::cout << "[tts] Synthesized " << pcm.size() << " samples at " << sampleRate << " Hz." << std::endl;
+
+        // Always save the output WAV file.
+        std::string savePath = "captures/tts_say.wav";
+        std::filesystem::path p(savePath);
+        if (p.has_parent_path() && !std::filesystem::exists(p.parent_path())) {
+            std::filesystem::create_directories(p.parent_path());
+        }
+        if (saveWav(savePath, pcm, static_cast<int32_t>(sampleRate))) {
+             std::cout << "[tts] Audio saved to " << savePath << std::endl;
+        } else {
+            std::cerr << "Error: Failed to save audio to " << savePath << std::endl;
+        }
+
+#ifdef WITH_AUDIO
+        // If audio is enabled, also play it back.
+        if (args.withAudio) {
+            Audio audio; // Needs its own scope for RAII
+            int outIdx = Audio::findDevice(args.outKey, true);
+             if (!args.outKey.empty() && outIdx == -1) {
+                std::cerr << "Error: Could not find requested output device: " << args.outKey << std::endl;
+                return 1;
+            }
+            std::cout << "[audio] Playing back synthesized audio..." << std::endl;
+            audio.playback(outIdx, sampleRate, pcm);
+            std::cout << "[audio] Playback finished." << std::endl;
+        }
+#endif
+        return 0; // Exit after --say is handled
     }
 #endif
 
@@ -334,6 +388,25 @@ int main(int argc, char** argv) {
                     std::cout << "[asr] Transcribing recorded audio..." << std::endl;
                     std::string transcript = asr.transcribe(pcm, sampleRate);
                     std::cout << "Transcript: " << transcript << std::endl;
+#ifdef WITH_PIPER
+                    if (args.withPiper && !args.piperModel.empty()) {
+                        std::cout << "[tts] Synthesizing confirmation..." << std::endl;
+                        TtsPiper piper(args.piperModel, args.piperBin);
+                        if (piper.isAvailable()) {
+                            double ttsSampleRate = 0;
+                            std::string confirmation = "OK, j'ai compris.";
+                            std::vector<int16_t> ttsPcm = piper.synthesize(confirmation, ttsSampleRate);
+                            if (!ttsPcm.empty()) {
+                                int outIdx = Audio::findDevice(args.outKey, true);
+                                audio.playback(outIdx, ttsSampleRate, ttsPcm);
+                            } else {
+                                std::cerr << "[tts] Error: " << piper.lastError() << std::endl;
+                            }
+                        } else {
+                             std::cerr << "[tts] Error: " << piper.lastError() << std::endl;
+                        }
+                    }
+#endif
                 } else {
                     std::cerr << "Error: " << asr.lastError() << std::endl;
                 }
@@ -342,46 +415,6 @@ int main(int argc, char** argv) {
 #endif
         return 0; // PTT mode exits after recording
     }
-
-#if defined(WITH_PIPER) && defined(WITH_AUDIO)
-    if (args.withPiper && !args.say.empty()) {
-        if (args.piperModel.empty()) {
-            std::cerr << "Error: --piper-model <path> is required when using --say." << std::endl;
-            return 1;
-        }
-
-        try {
-            TtsPiper piper(args.piperModel, args.piperBin);
-            if (!piper.isAvailable()) {
-                // isAvailable() already prints detailed errors
-                return 1;
-            }
-
-            std::cout << "[main] Synthesizing text: \"" << args.say << "\"" << std::endl;
-            double sampleRate = 0;
-            std::vector<int16_t> pcm = piper.synthesize(args.say, sampleRate);
-
-            if (pcm.empty()) {
-                std::cerr << "Error: TTS synthesis failed or produced empty audio." << std::endl;
-                return 1;
-            }
-
-            int outIdx = Audio::findDevice(args.outKey, true);
-            if (!args.outKey.empty() && outIdx == -1) {
-                std::cerr << "Error: Could not find requested output device: " << args.outKey << std::endl;
-                return 1;
-            }
-
-            std::cout << "[audio] Using output device index: " << outIdx << std::endl;
-            audio.playback(outIdx, sampleRate, pcm);
-
-        } catch (const std::runtime_error& e) {
-            std::cerr << "An error occurred during TTS processing: " << e.what() << std::endl;
-            return 1;
-        }
-        return 0; // Exit after --say is handled
-    }
-#endif
 #endif
 
     AppCfg cfg = loadCfg("config/app.env");

@@ -18,6 +18,7 @@ set(SRCS
   src/Env.cpp
   src/OpenAIClient.cpp
   src/Utils.cpp
+  src/dr_wav_impl.cpp
 )
 
 # Audio / ASR / TTS optionnels (n'ajoute les .cpp que si l'option est active)
@@ -34,6 +35,10 @@ if (WITH_PIPER)
 endif()
 
 add_executable(home_assistant ${SRCS})
+
+if (WITH_PIPER)
+  target_compile_definitions(home_assistant PRIVATE WITH_PIPER=1)
+endif()
 
 # Headers locaux + éventuel third_party (nlohmann/json.hpp, etc.)
 target_include_directories(home_assistant PRIVATE include third_party)
@@ -79,11 +84,6 @@ if (WITH_VOSK)
   else()
     message(FATAL_ERROR "Vosk not found. Set -DVOSK_INCLUDE_DIR and -DVOSK_LIBRARY, or disable with -DWITH_VOSK=OFF.")
   endif()
-endif()
-
-# ----- Piper optionnel (CLI, pas de lib) -----
-if (WITH_PIPER)
-  target_compile_definitions(home_assistant PRIVATE WITH_PIPER=1)
 endif()
 
 # Whisper : rien à brancher pour l'instant
