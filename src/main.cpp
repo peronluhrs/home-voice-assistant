@@ -145,36 +145,65 @@ static void playbackPcm(const std::vector<int16_t>& pcm, int deviceIndex) {
 #endif // WITH_AUDIO
 
 struct Args {
-    bool offline=false;
-    bool withAudio=false;
-    bool listDevices=false;
-    int  recordSeconds=5;
+    bool help = false;
+    bool offline = false;
+    bool withAudio = false;
+    bool listDevices = false;
+    int recordSeconds = 5;
     std::string inKey, outKey;
+    std::string voskModel, piperModel;
 };
+
+static void printHelp() {
+    std::cout << "Usage: home_assistant [options]\n\n"
+              << "General Options:\n"
+              << "  --help                Show this help message and exit.\n"
+              << "  --offline             Run in offline mode (no API calls, echoes input).\n\n"
+              << "Audio Options (require building with -DWITH_AUDIO=ON):\n"
+              << "  --with-audio          Enable audio input/output via PortAudio.\n"
+              << "  --list-devices        List available audio devices and exit.\n"
+              << "  --input-device <key>  Keyword or index for input device (default: system default).\n"
+              << "  --output-device <key> Keyword or index for output device (default: system default).\n"
+              << "  --record-seconds <N>  Duration of audio recording in seconds (default: 5).\n\n"
+              << "ASR/TTS Options:\n"
+              << "  --with-vosk           (Build-time) Enable Vosk ASR. Requires -DWITH_VOSK=ON.\n"
+              << "  --vosk-model <path>   Path to the Vosk model directory.\n"
+              << "  --with-piper          (Build-time) Enable Piper TTS. Requires -DWITH_PIPER=ON.\n"
+              << "  --piper-model <path>  Path to the Piper TTS model file (.onnx).\n";
+}
+
 static Args parseArgs(int argc, char** argv) {
     Args a;
-    for (int i=1;i<argc;i++) {
+    for (int i = 1; i < argc; i++) {
         std::string s = argv[i];
-        auto next = [&](std::string& dst){ if (i+1<argc) dst=argv[++i]; };
-        if (s=="--offline") a.offline=true;
-        else if (s=="--with-audio") a.withAudio=true;
-        else if (s=="--list-devices") a.listDevices=true;
-        else if (s=="--record-seconds") { std::string v; next(v); a.recordSeconds = std::max(1, std::atoi(v.c_str())); }
-        else if (s=="--input-device") next(a.inKey);
-        else if (s=="--output-device") next(a.outKey);
+        auto next = [&](std::string& dst){ if (i + 1 < argc) dst = argv[++i]; };
+        if (s == "--help") a.help = true;
+        else if (s == "--offline") a.offline = true;
+        else if (s == "--with-audio") a.withAudio = true;
+        else if (s == "--list-devices") a.listDevices = true;
+        else if (s == "--record-seconds") { std::string v; next(v); a.recordSeconds = std::max(1, std::atoi(v.c_str())); }
+        else if (s == "--input-device") next(a.inKey);
+        else if (s == "--output-device") next(a.outKey);
+        else if (s == "--vosk-model") next(a.voskModel);
+        else if (s == "--piper-model") next(a.piperModel);
     }
     return a;
 }
 static bool isNumber(const std::string& s){ if(s.empty())return false; for(char c:s) if(!std::isdigit((unsigned char)c)) return false; return true; }
 
 int main(int argc, char** argv) {
+    Args args = parseArgs(argc, argv);
+
+    if (args.help) {
+        printHelp();
+        return 0;
+    }
+
     AppCfg cfg = loadCfg("config/app.env");
     const char* e;
     if ((e=getenv("API_BASE"))) cfg.apiBase = e;
     if ((e=getenv("API_KEY" ))) cfg.apiKey  = e;
     if ((e=getenv("MODEL"   ))) cfg.model   = e;
-
-    Args args = parseArgs(argc, argv);
 
     std::cout << "[assistant] prêt. tape /exit pour quitter.\n";
     std::cout << "[cfg] API_BASE=" << cfg.apiBase << " MODEL=" << cfg.model << "\n";
