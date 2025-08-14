@@ -65,9 +65,6 @@ std::string join(const std::vector<std::string>& items, const std::string& sep) 
     return out;
 }
 
-#define DR_WAV_IMPLEMENTATION
-#include "dr_wav.h"
-
 #include <cmath>
 
 #ifdef WITH_VOSK
