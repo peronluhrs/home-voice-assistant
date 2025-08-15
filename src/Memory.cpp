@@ -1,4 +1,18 @@
 #include "Memory.h"
+#if defined(__has_include)
+#  if __has_include(<filesystem>)
+#    include <filesystem>
+     namespace fs = std::filesystem;
+#  elif __has_include(<experimental/filesystem>)
+#    include <experimental/filesystem>
+     namespace fs = std::experimental::filesystem;
+#  else
+#    error "No filesystem support"
+#  endif
+#else
+#  include <experimental/filesystem>
+   namespace fs = std::experimental::filesystem;
+#endif
 #include <fstream>
 #include <filesystem>
 #include <chrono>
@@ -46,12 +60,12 @@ MemoryStore::MemoryStore(const std::string& path) : path_(path) {
 
 bool MemoryStore::ensureParentDir() const {
     try {
-        std::filesystem::path p(path_);
+        fs::path p(path_);
         if (p.has_parent_path()) {
-            std::filesystem::create_directories(p.parent_path());
+            fs::create_directories(p.parent_path());
         }
         return true;
-    } catch (const std::filesystem::filesystem_error& e) {
+    } catch (const fs::filesystem_error& e) {
         // This could be a permission error, etc. For now, we don't log.
         return false;
     }
@@ -59,7 +73,7 @@ bool MemoryStore::ensureParentDir() const {
 
 bool MemoryStore::load() {
     ensureParentDir();
-    if (!std::filesystem::exists(path_)) {
+    if (!fs::exists(path_)) {
         return true; // Use default empty structure, will be saved on first write
     }
     std::ifstream f(path_);
@@ -88,8 +102,8 @@ bool MemoryStore::save() {
     if (o.fail()) return false;
 
     try {
-        std::filesystem::rename(tmp_path, path_);
-    } catch (const std::filesystem::filesystem_error& e) {
+        fs::rename(tmp_path, path_);
+    } catch (const fs::filesystem_error& e) {
         return false;
     }
     return true;

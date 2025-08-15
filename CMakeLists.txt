@@ -88,3 +88,10 @@ if (WITH_VOSK)
 endif()
 
 # Whisper : rien à brancher pour l'instant
+
+# --- GCC 7 compatibility: std::filesystem needs stdc++fs ---
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8.0)
+    target_link_libraries(home_assistant PRIVATE stdc++fs)
+  endif()
+endif()
