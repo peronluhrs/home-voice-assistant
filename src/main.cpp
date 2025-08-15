@@ -19,9 +19,16 @@
 #ifdef WITH_VOSK
 #include "AsrVosk.h"
 #endif
+#ifdef WITH_PIPER
+#include "TtsPiper.h"
+#endif
+#ifdef WITH_AUDIO
+#include "Audio.h"
+#endif
 
 #ifdef WITH_HTTP
 #include "HttpServer.h"
+#include <thread>
 #endif
 
 // --- config minimale (fallback si pas d'Env.h)
@@ -297,22 +304,22 @@ int main(int argc, char** argv) {
 
 #ifdef WITH_HTTP
     std::unique_ptr<HttpServer> http_server;
-    if (args.http) {
-        HttpOpts http_opts;
-        http_opts.host = args.httpHost;
-        http_opts.port = args.httpPort;
-        http_opts.bearer = args.httpBearer;
-        http_opts.enable_ws = !args.noWs;
-        http_server = std::make_unique<HttpServer>(http_opts);
-        // We'll start the server later, after components are ready
-    }
+#endif
+
+#ifdef WITH_AUDIO
+    Audio audio;
+#endif
+#ifdef WITH_VOSK
+    AsrVosk asr(args.voskModel);
+#endif
+#ifdef WITH_PIPER
+    TtsPiper piper(args.piperModel, args.piperBin);
 #endif
 
     if (args.loop) {
         std::cout << "[loop] Starting conversation loop..." << std::endl;
 
 #ifdef WITH_AUDIO
-        Audio audio; // RAII for PortAudio
         int inIdx = -1, outIdx = -1;
         if (args.withAudio) {
             inIdx = Audio::findDevice(args.inKey, false);
@@ -329,14 +336,12 @@ int main(int argc, char** argv) {
 #endif
 
 #ifdef WITH_VOSK
-        AsrVosk asr(args.voskModel);
         if (args.withVosk && !asr.isAvailable()) {
             std::cerr << "[asr] Vosk is enabled but model not loaded: " << asr.lastError() << ". ASR will be skipped." << std::endl;
         }
 #endif
 
 #ifdef WITH_PIPER
-        TtsPiper piper(args.piperModel, args.piperBin);
         if (args.withPiper && !piper.isAvailable()) {
             std::cerr << "[tts] Piper is enabled but not available: " << piper.lastError() << ". TTS will be skipped." << std::endl;
         }
@@ -354,8 +359,29 @@ int main(int argc, char** argv) {
         std::cout << "[cfg] API_BASE=" << cfg.apiBase << " MODEL=" << cfg.model << "\n";
 
 #ifdef WITH_HTTP
-        if (http_server) {
-            // Pass non-owning pointers to the main components
+        if (args.http) {
+            HttpOpts http_opts;
+            http_opts.host = args.httpHost;
+            http_opts.port = args.httpPort;
+            http_opts.bearer = args.httpBearer;
+            http_opts.enable_ws = !args.noWs;
+            http_server = std::make_unique<HttpServer>(http_opts, &mem,
+#ifdef WITH_PIPER
+                &piper,
+#else
+                nullptr,
+#endif
+#ifdef WITH_VOSK
+                &asr,
+#else
+                nullptr,
+#endif
+#ifdef WITH_AUDIO
+                &audio
+#else
+                nullptr
+#endif
+            );
             http_server->start();
         }
 #endif
@@ -524,14 +550,14 @@ int main(int argc, char** argv) {
             if (!args.logJsonl.empty()) {
                 nlohmann::json log_entry;
                 log_entry["ts"] = generateTimestamp("%Y-%m-%dT%H:%M:%SZ");
-                log_entry["input_wav"] = !input_wav_path.empty() ? input_wav_path : nlohmann::json(nullptr);
+                log_entry["input_wav"] = !input_wav_path.empty() ? nlohmann::json(input_wav_path) : nlohmann::json(nullptr);
                 log_entry["transcript"] = userText;
 
                 nlohmann::json intent_json;
                 intent_json["type"] = intentTypeToString(intent.type);
-                intent_json["key"] = (intent.type == IntentType::FACT_SET) ? intent.key : nlohmann::json(nullptr);
-                intent_json["value"] = (intent.type == IntentType::FACT_SET) ? intent.value : nlohmann::json(nullptr);
-                intent_json["when_iso"] = (intent.type == IntentType::REMINDER_ADD) ? intent.when_iso : nlohmann::json(nullptr);
+                intent_json["key"] = (intent.type == IntentType::FACT_SET) ? nlohmann::json(intent.key) : nlohmann::json(nullptr);
+                intent_json["value"] = (intent.type == IntentType::FACT_SET) ? nlohmann::json(intent.value) : nlohmann::json(nullptr);
+                intent_json["when_iso"] = (intent.type == IntentType::REMINDER_ADD) ? nlohmann::json(intent.when_iso) : nlohmann::json(nullptr);
                 log_entry["intent"] = intent_json;
 
                 log_entry["assistant_text"] = assistantText;
@@ -557,7 +583,35 @@ int main(int argc, char** argv) {
 
 #ifdef WITH_HTTP
     // If only http is enabled, keep the process alive
-    if (http_server && !args.loop) {
+    if (args.http && !args.loop) {
+        HttpOpts http_opts;
+        http_opts.host = args.httpHost;
+        http_opts.port = args.httpPort;
+        http_opts.bearer = args.httpBearer;
+        http_opts.enable_ws = !args.noWs;
+
+        MemoryStore mem;
+        mem.load();
+
+        http_server = std::make_unique<HttpServer>(http_opts, &mem,
+#ifdef WITH_PIPER
+            &piper,
+#else
+            nullptr,
+#endif
+#ifdef WITH_VOSK
+            &asr,
+#else
+            nullptr,
+#endif
+#ifdef WITH_AUDIO
+            &audio
+#else
+            nullptr
+#endif
+        );
+        http_server->start();
+
         std::cout << "[http] Server is running. Press Ctrl+C to exit." << std::endl;
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(1));

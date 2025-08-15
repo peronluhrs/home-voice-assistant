@@ -129,30 +129,6 @@ home_assistant/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/build
 .PHONY : home_assistant/fast
 
-src/Audio.o: src/Audio.cpp.o
-.PHONY : src/Audio.o
-
-# target to build an object file
-src/Audio.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Audio.cpp.o
-.PHONY : src/Audio.cpp.o
-
-src/Audio.i: src/Audio.cpp.i
-.PHONY : src/Audio.i
-
-# target to preprocess a source file
-src/Audio.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Audio.cpp.i
-.PHONY : src/Audio.cpp.i
-
-src/Audio.s: src/Audio.cpp.s
-.PHONY : src/Audio.s
-
-# target to generate assembly for a file
-src/Audio.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Audio.cpp.s
-.PHONY : src/Audio.cpp.s
-
 src/Env.o: src/Env.cpp.o
 .PHONY : src/Env.o
 
@@ -176,6 +152,54 @@ src/Env.s: src/Env.cpp.s
 src/Env.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Env.cpp.s
 .PHONY : src/Env.cpp.s
+
+src/HttpServer.o: src/HttpServer.cpp.o
+.PHONY : src/HttpServer.o
+
+# target to build an object file
+src/HttpServer.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/HttpServer.cpp.o
+.PHONY : src/HttpServer.cpp.o
+
+src/HttpServer.i: src/HttpServer.cpp.i
+.PHONY : src/HttpServer.i
+
+# target to preprocess a source file
+src/HttpServer.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/HttpServer.cpp.i
+.PHONY : src/HttpServer.cpp.i
+
+src/HttpServer.s: src/HttpServer.cpp.s
+.PHONY : src/HttpServer.s
+
+# target to generate assembly for a file
+src/HttpServer.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/HttpServer.cpp.s
+.PHONY : src/HttpServer.cpp.s
+
+src/Memory.o: src/Memory.cpp.o
+.PHONY : src/Memory.o
+
+# target to build an object file
+src/Memory.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Memory.cpp.o
+.PHONY : src/Memory.cpp.o
+
+src/Memory.i: src/Memory.cpp.i
+.PHONY : src/Memory.i
+
+# target to preprocess a source file
+src/Memory.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Memory.cpp.i
+.PHONY : src/Memory.cpp.i
+
+src/Memory.s: src/Memory.cpp.s
+.PHONY : src/Memory.s
+
+# target to generate assembly for a file
+src/Memory.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Memory.cpp.s
+.PHONY : src/Memory.cpp.s
 
 src/OpenAIClient.o: src/OpenAIClient.cpp.o
 .PHONY : src/OpenAIClient.o
@@ -225,6 +249,30 @@ src/Utils.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/Utils.cpp.s
 .PHONY : src/Utils.cpp.s
 
+src/dr_wav_impl.o: src/dr_wav_impl.cpp.o
+.PHONY : src/dr_wav_impl.o
+
+# target to build an object file
+src/dr_wav_impl.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/dr_wav_impl.cpp.o
+.PHONY : src/dr_wav_impl.cpp.o
+
+src/dr_wav_impl.i: src/dr_wav_impl.cpp.i
+.PHONY : src/dr_wav_impl.i
+
+# target to preprocess a source file
+src/dr_wav_impl.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/dr_wav_impl.cpp.i
+.PHONY : src/dr_wav_impl.cpp.i
+
+src/dr_wav_impl.s: src/dr_wav_impl.cpp.s
+.PHONY : src/dr_wav_impl.s
+
+# target to generate assembly for a file
+src/dr_wav_impl.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/home_assistant.dir/build.make CMakeFiles/home_assistant.dir/src/dr_wav_impl.cpp.s
+.PHONY : src/dr_wav_impl.cpp.s
+
 src/main.o: src/main.cpp.o
 .PHONY : src/main.o
 
@@ -258,18 +306,24 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... home_assistant"
-	@echo "... src/Audio.o"
-	@echo "... src/Audio.i"
-	@echo "... src/Audio.s"
 	@echo "... src/Env.o"
 	@echo "... src/Env.i"
 	@echo "... src/Env.s"
+	@echo "... src/HttpServer.o"
+	@echo "... src/HttpServer.i"
+	@echo "... src/HttpServer.s"
+	@echo "... src/Memory.o"
+	@echo "... src/Memory.i"
+	@echo "... src/Memory.s"
 	@echo "... src/OpenAIClient.o"
 	@echo "... src/OpenAIClient.i"
 	@echo "... src/OpenAIClient.s"
 	@echo "... src/Utils.o"
 	@echo "... src/Utils.i"
 	@echo "... src/Utils.s"
+	@echo "... src/dr_wav_impl.o"
+	@echo "... src/dr_wav_impl.i"
+	@echo "... src/dr_wav_impl.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
