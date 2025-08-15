@@ -28,6 +28,14 @@ public:
   bool completeReminder(const std::string& id);
   std::vector<Reminder> listReminders(bool includeDone=true) const;
 
+  // Http methods
+  nlohmann::json toJson() const { return j_; }
+  void fromJson(const nlohmann::json& j, bool merge = false) {
+      if (merge) j_.merge_patch(j);
+      else j_ = j;
+  }
+  void clear() { j_.clear(); }
+
 private:
   std::string path_;
   nlohmann::json j_; // { "version":1, "facts":{...}, "notes":[...], "reminders":[...] }
