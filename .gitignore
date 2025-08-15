@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
+
+# Enregistrements / sorties
+*.wav
+*.mp3
+*.ogg
+*.txt
+
+# Modèles & poids (Vosk, Whisper…)
+models/
+model/
+
+# Environnements virtuels
+.venv/
+.venvs/
+
+# Builds / binaires
+build/
+dist/
+*.spec

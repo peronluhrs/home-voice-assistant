@@ -1,0 +1,1 @@
+/home/nanan/voice-assistant/bin/run_assistant.sh
