@@ -7,6 +7,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Options (TOUTES OFF par défaut, sauf CURL pour garder l'HTTP quand dispo)
 option(WITH_CURL   "Use libcurl for HTTP requests" ON)
+option(WITH_HTTP   "Enable built-in HTTP/WS API" ON)
+option(WITH_HTTP   "Enable built-in HTTP/WS API" ON)
 option(WITH_AUDIO  "Enable PortAudio capture/playback" OFF)
 option(WITH_VOSK   "Enable Vosk ASR backend" OFF)
 option(WITH_WHISPER "Enable whisper.cpp ASR backend" OFF)  # stub/optionnel
@@ -35,10 +37,19 @@ if (WITH_PIPER)
   list(APPEND SRCS src/TtsPiper.cpp)
 endif()
 
+if (WITH_HTTP)
+  list(APPEND SRCS src/HttpServer.cpp)
+endif()
+
 add_executable(home_assistant ${SRCS})
 
 if (WITH_PIPER)
   target_compile_definitions(home_assistant PRIVATE WITH_PIPER=1)
+endif()
+
+if (WITH_HTTP)
+    add_compile_definitions(home_assistant PRIVATE WITH_HTTP=1)
+    target_include_directories(home_assistant PRIVATE third_party include)
 endif()
 
 # Headers locaux + éventuel third_party (nlohmann/json.hpp, etc.)

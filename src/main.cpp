@@ -20,6 +20,10 @@
 #include "AsrVosk.h"
 #endif
 
+#ifdef WITH_HTTP
+#include "HttpServer.h"
+#endif
+
 // --- config minimale (fallback si pas d'Env.h)
 struct AppCfg {
     std::string apiBase = "http://localhost:8000/v1";
@@ -162,6 +166,13 @@ struct Args {
     int loopPttSeconds = 10;
     std::string loopSaveWavs;
     std::string logJsonl;
+
+    // HTTP Server options
+    bool http = false;
+    std::string httpHost = "127.0.0.1";
+    int httpPort = 8787;
+    std::string httpBearer;
+    bool noWs = false;
 };
 
 static void printHelp() {
@@ -206,7 +217,13 @@ static void printHelp() {
               << "  --loop-max-turns <N>  Exit after N turns (default: 0 = unlimited).\n"
               << "  --loop-ptt-seconds <N>  Fallback cap if VAD doesn’t stop (default: 10s).\n"
               << "  --loop-save-wavs <dir> If set, save input WAVs + TTS WAVs in that dir.\n"
-              << "  --log-jsonl <path>    Append JSONL logs of each turn.\n";
+              << "  --log-jsonl <path>    Append JSONL logs of each turn.\n\n"
+              << "HTTP Server Options (require building with -DWITH_HTTP=ON):\n"
+              << "  --http                Enable HTTP server.\n"
+              << "  --http-host <host>    HTTP server host (default: 127.0.0.1).\n"
+              << "  --http-port <int>     HTTP server port (default: 8787).\n"
+              << "  --http-bearer <token> Optional bearer token for authentication.\n"
+              << "  --no-ws               Disable WebSocket events.\n";
 }
 
 static Args parseArgs(int argc, char** argv) {
@@ -256,6 +273,12 @@ static Args parseArgs(int argc, char** argv) {
         else if (s == "--loop-ptt-seconds") { std::string v; next(v); a.loopPttSeconds = std::max(1, std::atoi(v.c_str())); }
         else if (s == "--loop-save-wavs") next(a.loopSaveWavs);
         else if (s == "--log-jsonl") next(a.logJsonl);
+        // HTTP server args
+        else if (s == "--http") a.http = true;
+        else if (s == "--http-host") next(a.httpHost);
+        else if (s == "--http-port") { std::string v; next(v); a.httpPort = std::atoi(v.c_str()); }
+        else if (s == "--http-bearer") next(a.httpBearer);
+        else if (s == "--no-ws") a.noWs = true;
     }
     // --say implies --with-piper
     if (!a.say.empty()) {
@@ -271,6 +294,19 @@ int main(int argc, char** argv) {
         printHelp();
         return 0;
     }
+
+#ifdef WITH_HTTP
+    std::unique_ptr<HttpServer> http_server;
+    if (args.http) {
+        HttpOpts http_opts;
+        http_opts.host = args.httpHost;
+        http_opts.port = args.httpPort;
+        http_opts.bearer = args.httpBearer;
+        http_opts.enable_ws = !args.noWs;
+        http_server = std::make_unique<HttpServer>(http_opts);
+        // We'll start the server later, after components are ready
+    }
+#endif
 
     if (args.loop) {
         std::cout << "[loop] Starting conversation loop..." << std::endl;
@@ -316,6 +352,13 @@ int main(int argc, char** argv) {
         if ((e=getenv("MODEL"   ))) cfg.model   = e;
         OpenAIClient client(cfg.apiBase, cfg.apiKey, cfg.model, args.offline);
         std::cout << "[cfg] API_BASE=" << cfg.apiBase << " MODEL=" << cfg.model << "\n";
+
+#ifdef WITH_HTTP
+        if (http_server) {
+            // Pass non-owning pointers to the main components
+            http_server->start();
+        }
+#endif
 
         for (int turn = 1; args.loopMaxTurns == 0 || turn <= args.loopMaxTurns; ++turn) {
             std::cout << "\n--- Turn " << turn << " ---" << std::endl;
@@ -500,12 +543,27 @@ int main(int argc, char** argv) {
                 } else {
                     std::cerr << "[log] Failed to open log file for appending: " << args.logJsonl << std::endl;
                 }
+#ifdef WITH_HTTP
+                if (http_server && http_server->isRunning() && !args.noWs) {
+                    http_server->pushEvent(log_entry.dump());
+                }
+#endif
             }
         }
 
         std::cout << "[loop] Loop finished." << std::endl;
         return 0;
     }
+
+#ifdef WITH_HTTP
+    // If only http is enabled, keep the process alive
+    if (http_server && !args.loop) {
+        std::cout << "[http] Server is running. Press Ctrl+C to exit." << std::endl;
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }
+#endif
 
     // --- Memory CLI flags ---
     bool isMemoryOp = !args.memSet.empty() || !args.memGet.empty() || !args.memDel.empty() || args.memList
