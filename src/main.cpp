@@ -1,3 +1,4 @@
+#include <thread>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -6,7 +7,12 @@
 #include <cctype>
 #include <limits>
 #include <iomanip>
+#if __has_include(<filesystem>)
 #include <filesystem>
+#else
+#include <experimental/filesystem>
+namespace std { namespace filesystem = experimental::filesystem; }
+#endif
 #include <chrono>
 #include <ctime>
 #include <sstream>
@@ -524,14 +530,14 @@ int main(int argc, char** argv) {
             if (!args.logJsonl.empty()) {
                 nlohmann::json log_entry;
                 log_entry["ts"] = generateTimestamp("%Y-%m-%dT%H:%M:%SZ");
-                log_entry["input_wav"] = !input_wav_path.empty() ? input_wav_path : nlohmann::json(nullptr);
+                log_entry["input_wav"] = !input_wav_path.empty() ? nlohmann::json(input_wav_path) : nlohmann::json(nullptr);
                 log_entry["transcript"] = userText;
 
                 nlohmann::json intent_json;
                 intent_json["type"] = intentTypeToString(intent.type);
-                intent_json["key"] = (intent.type == IntentType::FACT_SET) ? intent.key : nlohmann::json(nullptr);
-                intent_json["value"] = (intent.type == IntentType::FACT_SET) ? intent.value : nlohmann::json(nullptr);
-                intent_json["when_iso"] = (intent.type == IntentType::REMINDER_ADD) ? intent.when_iso : nlohmann::json(nullptr);
+                intent_json["key"] = (intent.type == IntentType::FACT_SET) ? nlohmann::json(intent.key) : nlohmann::json(nullptr);
+                intent_json["value"] = (intent.type == IntentType::FACT_SET) ? nlohmann::json(intent.value) : nlohmann::json(nullptr);
+                intent_json["when_iso"] = (intent.type == IntentType::REMINDER_ADD) ? nlohmann::json(intent.when_iso) : nlohmann::json(nullptr);
                 log_entry["intent"] = intent_json;
 
                 log_entry["assistant_text"] = assistantText;
