@@ -1,0 +1,227 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <cstdlib>
+#include <cctype>
+#include <limits>
+#include <map>
+
+#include "OpenAIClient.h"
+
+// ---------------- cfg minimal: lit config/app.env (clé=valeur)
+struct AppCfg {
+    std::string apiBase = "http://localhost:8000/v1";
+    std::string apiKey  = "EMPTY";
+    std::string model   = "gpt-4o-mini";
+};
+
+static AppCfg loadCfg(const std::string& path) {
+    AppCfg c;
+    std::ifstream f(path);
+    if (!f) return c;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0]=='#') continue;
+        auto p = line.find('=');
+        if (p==std::string::npos) continue;
+        std::string k = line.substr(0,p);
+        std::string v = line.substr(p+1);
+        auto trim = [](std::string s){
+            auto issp = [](unsigned char ch){ return std::isspace(ch); };
+            while(!s.empty() && issp(s.front())) s.erase(s.begin());
+            while(!s.empty() && issp(s.back()))  s.pop_back();
+            return s;
+        };
+        k = trim(k); v = trim(v);
+        if (k=="API_BASE") c.apiBase = v;
+        else if (k=="API_KEY") c.apiKey = v;
+        else if (k=="MODEL") c.model = v;
+    }
+    return c;
+}
+
+// ---------------- Audio minimal (uniquement si -DWITH_AUDIO=ON)
+#ifdef WITH_AUDIO
+#include <portaudio.h>
+struct DeviceInfo { int index; std::string name; std::string host; };
+
+static std::vector<DeviceInfo> listPaDevices() {
+    std::vector<DeviceInfo> out;
+    Pa_Initialize();
+    int n = Pa_GetDeviceCount();
+    for (int i = 0; i < n; ++i) {
+        const PaDeviceInfo* di = Pa_GetDeviceInfo(i);
+        const PaHostApiInfo* hai = Pa_GetHostApiInfo(di->hostApi);
+        out.push_back({ i, di && di->name ? di->name : "", hai && hai->name ? hai->name : "" });
+    }
+    Pa_Terminate();
+    return out;
+}
+
+static int findDeviceIndex(const std::string& key, bool output) {
+    Pa_Initialize();
+    int n = Pa_GetDeviceCount();
+    int best = -1;
+    for (int i = 0; i < n; ++i) {
+        const PaDeviceInfo* di = Pa_GetDeviceInfo(i);
+        if (!di) continue;
+        if (output && di->maxOutputChannels <= 0) continue;
+        if (!output && di->maxInputChannels <= 0) continue;
+        std::string nm = di->name ? di->name : "";
+        if (!key.empty() && nm.find(key) != std::string::npos) { best = i; break; }
+    }
+    if (best < 0) best = output ? Pa_GetDefaultOutputDevice() : Pa_GetDefaultInputDevice();
+    Pa_Terminate();
+    return best;
+}
+
+static std::vector<int16_t> recordSeconds(int seconds, int deviceIndex) {
+    const double sampleRate = 16000.0;
+    const int frames = seconds * (int)sampleRate;
+    std::vector<int16_t> buf(frames);
+
+    PaStream* stream = nullptr;
+    PaStreamParameters inParams{};
+    Pa_Initialize();
+    inParams.device = (deviceIndex >= 0) ? deviceIndex : Pa_GetDefaultInputDevice();
+    inParams.channelCount = 1;
+    inParams.sampleFormat = paInt16;
+    inParams.suggestedLatency = Pa_GetDeviceInfo(inParams.device)->defaultLowInputLatency;
+    inParams.hostApiSpecificStreamInfo = nullptr;
+
+    Pa_OpenStream(&stream, &inParams, nullptr, sampleRate, paFramesPerBufferUnspecified, paNoFlag, nullptr, nullptr);
+    Pa_StartStream(stream);
+    Pa_ReadStream(stream, buf.data(), (unsigned long)frames);
+    Pa_StopStream(stream);
+    Pa_CloseStream(stream);
+    Pa_Terminate();
+    return buf;
+}
+
+static void playbackPcm(const std::vector<int16_t>& pcm, int deviceIndex) {
+    const double sampleRate = 16000.0;
+
+    PaStream* stream = nullptr;
+    PaStreamParameters outParams{};
+    Pa_Initialize();
+    outParams.device = (deviceIndex >= 0) ? deviceIndex : Pa_GetDefaultOutputDevice();
+    outParams.channelCount = 1;
+    outParams.sampleFormat = paInt16;
+    outParams.suggestedLatency = Pa_GetDeviceInfo(outParams.device)->defaultLowOutputLatency;
+    outParams.hostApiSpecificStreamInfo = nullptr;
+
+    Pa_OpenStream(&stream, nullptr, &outParams, sampleRate, paFramesPerBufferUnspecified, paNoFlag, nullptr, nullptr);
+    Pa_StartStream(stream);
+    Pa_WriteStream(stream, pcm.data(), (unsigned long)pcm.size());
+    Pa_StopStream(stream);
+    Pa_CloseStream(stream);
+    Pa_Terminate();
+}
+#endif // WITH_AUDIO
+
+// ---------------- CLI
+struct Args {
+    bool offline=false;
+    bool withAudio=false;
+    bool listDevices=false;
+    int  recordSeconds=5;
+    std::string inKey, outKey;
+};
+
+static Args parseArgs(int argc, char** argv) {
+    Args a;
+    for (int i=1;i<argc;i++) {
+        std::string s = argv[i];
+        auto next = [&](std::string& dst){ if (i+1<argc) dst=argv[++i]; };
+        if (s=="--offline") a.offline=true;
+        else if (s=="--with-audio") a.withAudio=true;
+        else if (s=="--list-devices") a.listDevices=true;
+        else if (s=="--record-seconds") { std::string v; next(v); a.recordSeconds = std::max(1, std::atoi(v.c_str())); }
+        else if (s=="--input-device") next(a.inKey);
+        else if (s=="--output-device") next(a.outKey);
+        // LLM overrides (optionnels)
+        else if (s=="--api-base") { std::string v; next(v); setenv("API_BASE", v.c_str(), 1); }
+        else if (s=="--api-key")  { std::string v; next(v); setenv("API_KEY",  v.c_str(), 1); }
+        else if (s=="--model")    { std::string v; next(v); setenv("MODEL",    v.c_str(), 1); }
+    }
+    return a;
+}
+
+static bool isNumber(const std::string& s) {
+    if (s.empty()) return false;
+    for (char c: s) if (!std::isdigit((unsigned char)c)) return false;
+    return true;
+}
+
+// ---------------- main
+int main(int argc, char** argv) {
+    AppCfg cfg = loadCfg("config/app.env");
+    // overrides via env (si présents)
+    const char* e;
+    if ((e=getenv("API_BASE"))) cfg.apiBase = e;
+    if ((e=getenv("API_KEY" ))) cfg.apiKey  = e;
+    if ((e=getenv("MODEL"   ))) cfg.model   = e;
+
+    Args args = parseArgs(argc, argv);
+
+    std::cout << "[assistant] prêt. tape /exit pour quitter.\n";
+    std::cout << "[cfg] API_BASE=" << cfg.apiBase << " MODEL=" << cfg.model << "\n";
+
+#ifdef WITH_AUDIO
+    if (args.listDevices) {
+        auto devs = listPaDevices();
+        for (auto& d : devs) std::cout << d.index << " : " << d.name << " [" << d.host << "]\n";
+        return 0;
+    }
+#endif
+
+    OpenAIClient client(cfg.apiBase, cfg.apiKey, cfg.model);
+
+#ifdef WITH_AUDIO
+    if (args.withAudio) {
+        std::cout << "[audio] Appuie Entrée pour parler (" << args.recordSeconds << "s)…";
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+        int inIdx  = -1;
+        int outIdx = -1;
+        if (!args.inKey.empty())  inIdx  = isNumber(args.inKey)  ? std::atoi(args.inKey.c_str())  : findDeviceIndex(args.inKey, false);
+        if (!args.outKey.empty()) outIdx = isNumber(args.outKey) ? std::atoi(args.outKey.c_str()) : findDeviceIndex(args.outKey, true);
+
+        auto pcm = recordSeconds(args.recordSeconds, inIdx);
+
+        // Léger: pas d’ASR ici. Placeholder → LLM (ou offline echo)
+        std::string userText = "[audio] (capture " + std::to_string(args.recordSeconds) + "s)";
+        std::string reply;
+        if (args.offline) {
+            reply = "(offline) Echo: " + userText;
+        } else {
+            auto r = client.chatOnce(userText);
+            reply = r.ok ? r.text : std::string("[error] ") + (!r.error.empty() ? r.error : r.text);
+        }
+        std::cout << "assistant> " << reply << "\n";
+
+        playbackPcm(pcm, outIdx);
+        return 0;
+    }
+#endif
+
+    // REPL texte (fallback universel)
+    std::string line;
+    while (true) {
+        std::cout << "you> ";
+        if (!std::getline(std::cin, line)) break;
+        if (line == "/exit") {
+            std::cout << "[assistant] au revoir.\n";
+            break;
+        }
+        if (args.offline) {
+            std::cout << "assistant> (offline) Echo: " << line << "\n";
+            continue;
+        }
+        ChatResult r = client.chatOnce(line);
+        if (!r.ok) std::cout << "assistant> [error] " << (!r.error.empty() ? r.error : r.text) << "\n";
+        else       std::cout << "assistant> " << r.text << "\n";
+    }
+    return 0;
+}
